@@ -7,13 +7,14 @@ from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from hearthstone.enums import CardType, GameTag
+from hearthstone.hslog.parser import LogParser
 from hearthstone.hslog.export import EntityTreeExporter
 from hsreplay.document import HSReplayDocument
 from hsreplaynet.cards.models import Card, Deck
 from hsreplaynet.utils import guess_ladder_season, log
 from hsreplaynet.utils.influx import influx_metric
 from hsreplaynet.uploads.models import UploadEventStatus
-from .metrics import InfluxInstrumentedParser
+from .metrics import InstrumentedExporter
 from .models import GameReplay, GlobalGame, GlobalGamePlayer, _generate_upload_path
 
 
@@ -297,16 +298,13 @@ def parse_upload_event(upload_event, meta):
 	upload_event.file.close()
 
 	try:
-		parser = InfluxInstrumentedParser(upload_event.shortid, meta)
+		parser = LogParser()
 		parser._game_state_processor = "GameState"
 		parser._current_date = match_start
 		parser.read(powerlog)
 	except Exception as e:
 		log.exception("Got exception %r while parsing log", e)
 		raise ParsingError(str(e))  # from e
-
-	if not upload_event.test_data:
-		parser.write_payload()
 
 	return parser
 
@@ -316,7 +314,7 @@ def validate_parser(parser, meta):
 	if len(parser.games) != 1:
 		raise ValidationError("Expected exactly 1 game, got %i" % (len(parser.games)))
 	packet_tree = parser.games[0]
-	exporter = packet_tree.export()
+	exporter = InstrumentedExporter(packet_tree, meta).export()
 	entity_tree = exporter.game
 
 	if len(entity_tree.players) != 2:
@@ -355,7 +353,7 @@ def validate_parser(parser, meta):
 	meta["start_time"] = packet_tree.start_time
 	meta["end_time"] = packet_tree.end_time
 
-	return entity_tree
+	return entity_tree, exporter
 
 
 def get_player_names(player):
@@ -442,7 +440,7 @@ def do_process_upload_event(upload_event):
 	# Parse the UploadEvent's file
 	parser = parse_upload_event(upload_event, meta)
 	# Validate the resulting object and metadata
-	entity_tree = validate_parser(parser, meta)
+	entity_tree, exporter = validate_parser(parser, meta)
 
 	# Create/Update the global game object and its players
 	global_game, created = find_or_create_global_game(entity_tree, meta)
@@ -452,5 +450,8 @@ def do_process_upload_event(upload_event):
 	replay, created = find_or_create_replay(
 		parser, entity_tree, meta, upload_event, global_game, players
 	)
+
+	if not upload_event.test_data:
+		exporter.write_payload(replay.shortid)
 
 	return replay
