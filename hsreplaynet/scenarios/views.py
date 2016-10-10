@@ -1,9 +1,11 @@
 from django.shortcuts import render
 from django.views.generic import View
 from .models import Scenario
+from hsreplaynet.features.decorators import view_requires_feature_access
 
 
 class ScenarioListView(View):
+	@view_requires_feature_access("scenarios")
 	def get(self, request):
 		context = {
 			"scenarios": Scenario.objects.filter(adventure=10).all()
@@ -13,6 +15,7 @@ class ScenarioListView(View):
 
 
 class ScenarioDetailsView(View):
+	@view_requires_feature_access("scenarios")
 	def get(self, request, scenario_id):
 		context = {
 			"scenario": Scenario.objects.get(pk=scenario_id),

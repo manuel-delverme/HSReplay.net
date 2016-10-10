@@ -51,10 +51,16 @@
 			<ul>
 			{% if user.is_authenticated %}
 				<li><a href="{% url 'my_replays' %}">My Replays</a></li>
-				{% if user.is_staff %}
+
+				{% feature "scenarios" as scenarios %}
+				{% if scenarios.is_enabled %}
 					<li><a href="{% url 'scenario_list_view' %}">Scenarios</a></li>
+				{% endif %}
+
+				{% if user.is_staff %}
 					<li><a href="{% url 'admin:index' %}">Admin</a></li>
 				{% endif %}
+
 			{% endif %}
 			{% if twitter_handle %}
 				<li><a href="https://twitter.com/{{ twitter_handle }}" class="hidden-xs" target="_blank">@{{ twitter_handle }}</a></li>
