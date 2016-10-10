@@ -3,6 +3,8 @@ import re
 import json
 import base64
 import os
+import time
+from botocore.vendored.requests.packages.urllib3.exceptions import ReadTimeoutError
 from datetime import datetime, timedelta
 from django.conf import settings
 from django.db import models
@@ -296,6 +298,16 @@ class UploadEvent(models.Model):
 
 	def get_absolute_url(self):
 		return reverse("upload_detail", kwargs={"shortid": self.shortid})
+
+	def log_bytes(self):
+		try:
+			self.file.open(mode="rb")
+			return self.file.read()
+		except ReadTimeoutError:
+			# We wait one second and then give it a second attempt before we fail
+			time.sleep(1)
+			self.file.open(mode="rb")
+			return self.file.read()
 
 	def process(self):
 		from hsreplaynet.games.processing import process_upload_event
