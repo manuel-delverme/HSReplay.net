@@ -1,6 +1,6 @@
 import hashlib
 import random
-from django.db import models
+from django.db import models, connection
 from hearthstone import enums
 from hsreplaynet.utils.fields import IntEnumField
 
@@ -107,27 +107,19 @@ class Card(models.Model):
 
 class DeckManager(models.Manager):
 	def get_or_create_from_id_list(self, id_list):
-		digest = generate_digest_from_deck_list(id_list)
-
-		deck, deck_created = Deck.objects.get_or_create(digest=digest)
-		if not deck_created:
-			return deck, False
-
-		for card_id in id_list:
-			include, created = deck.includes.get_or_create(
-				deck=deck,
-				card_id=card_id,
-				defaults={"count": 1}
-			)
-
-			if not created:
-				# This must be an additional copy of a card we've
-				# seen previously so we increment the count
-				include.count += 1
-				include.save()
-
-		deck.save()
-		return deck, True
+		if len(id_list):
+			# This native implementation in the DB is to reduce the volume
+			# of DB chatter between Lambdas and the DB
+			cursor = connection.cursor()
+			cursor.callproc("get_or_create_deck", (id_list,))
+			result_row = cursor.fetchone()
+			deck_id = int(result_row[0])
+			created = result_row[1]
+			cursor.close()
+			return Deck(id=deck_id), created
+		else:
+			digest = generate_digest_from_deck_list(id_list)
+			return Deck.objects.get_or_create(digest=digest)
 
 
 def generate_digest_from_deck_list(id_list):
