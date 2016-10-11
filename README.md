@@ -24,7 +24,7 @@ The full backend stack is written in Python 3.
 ### Production stack
 
 * Accounts: [Battle.net API](https://dev.battle.net/)
-* Web server: [nginx](https://nginx.org/)
+* Web server: [Caddy](https://caddyserver.com/)
 * App server: [uWSGI](https://uwsgi-docs.readthedocs.io/en/latest/)
 * Database: [PostgreSQL (RDS)](https://aws.amazon.com/rds/postgresql/)
 * Hosting: [Amazon Web Services](https://aws.amazon.com/)
