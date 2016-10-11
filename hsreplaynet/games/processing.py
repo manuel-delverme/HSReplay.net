@@ -15,7 +15,10 @@ from hsreplaynet.utils import guess_ladder_season, log
 from hsreplaynet.utils.influx import influx_metric
 from hsreplaynet.uploads.models import UploadEventStatus
 from .metrics import InstrumentedExporter
-from .models import GameReplay, GlobalGame, GlobalGamePlayer, _generate_upload_path
+from .models import (
+	GameReplay, GlobalGame, GlobalGamePlayer,
+	_generate_upload_path, ReplayAlias
+)
 
 
 class ProcessingError(Exception):
@@ -206,6 +209,11 @@ def find_or_create_replay(parser, entity_tree, meta, upload_event, global_game, 
 
 	# Save the replay file
 	replay.replay_xml.save("hsreplay.xml", xml_file, save=False)
+
+	if replay.shortid != upload_event.shortid:
+		# We must ensure an alias for this upload_event.shortid is recorded
+		# We use get or create in case this is not the first time processing this replay
+		ReplayAlias.objects.get_or_create(replay=replay, shortid=upload_event.shortid)
 
 	return replay, created
 

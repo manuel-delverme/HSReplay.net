@@ -1,5 +1,6 @@
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.shortcuts import get_object_or_404, render
+from django.http import Http404
+from django.shortcuts import render
 from django.views.generic import View
 from django.views.decorators.clickjacking import xframe_options_exempt
 from .models import GameReplay
@@ -14,7 +15,9 @@ class MyReplaysView(LoginRequiredMixin, View):
 
 class ReplayDetailView(View):
 	def get(self, request, id):
-		replay = get_object_or_404(GameReplay.objects.live(), shortid=id)
+		replay = GameReplay.objects.find_by_short_id(id)
+		if not replay:
+			return Http404()
 
 		# TODO: IP caching in redis
 		replay.views += 1
@@ -36,5 +39,7 @@ class ReplayDetailView(View):
 class ReplayEmbedView(View):
 	@xframe_options_exempt
 	def get(self, request, id):
-		replay = get_object_or_404(GameReplay.objects.live(), shortid=id)
+		replay = GameReplay.objects.find_by_short_id(id)
+		if not replay:
+			return Http404()
 		return render(request, "games/replay_embed.html", {"replay": replay})

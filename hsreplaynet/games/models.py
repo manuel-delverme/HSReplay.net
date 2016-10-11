@@ -212,6 +212,25 @@ class GameReplayManager(models.Manager):
 	def live(self):
 		return self.filter(is_deleted=False)
 
+	def find_by_short_id(self, shortid):
+		"""Fetch a game replay by its ShortID
+
+		If the ShortID is an alias it will get resolved and the replay will be returned.
+
+		Returns None if a replay cannot be found.
+		"""
+		try:
+			return GameReplay.objects.get(shortid=shortid, is_deleted=False)
+		except GameReplay.DoesNotExist:
+			try:
+				alias = ReplayAlias.objects.get(shortid=shortid)
+				if not alias.replay.is_deleted:
+					return alias.replay
+			except ReplayAlias.DoesNotExist:
+				pass
+
+		return None
+
 
 class GameReplay(models.Model):
 	"""
@@ -374,6 +393,19 @@ class GameReplay(models.Model):
 		from hsreplaynet.games.recommendations import recommend_related_replays
 
 		return recommend_related_replays(self, num)
+
+
+class ReplayAlias(models.Model):
+	"""
+	Replay aliases are alternative shortids that reference the same GameReplay.
+
+	Each time a power.log is uploaded it is assigned a distinct ShortID. However, if that
+	power.log is a duplicate then instead of creating an additional GameReplay, we create
+	a ReplayAlias for that ShortID which can be used to lookup the game replay.
+	"""
+	id = models.BigAutoField(primary_key=True)
+	shortid = ShortUUIDField("Short ID")
+	replay = models.ForeignKey(GameReplay, on_delete=models.CASCADE, related_name="aliases")
 
 
 @receiver(models.signals.post_delete, sender=GameReplay)
