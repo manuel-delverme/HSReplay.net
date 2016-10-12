@@ -17,7 +17,7 @@ class ReplayDetailView(View):
 	def get(self, request, id):
 		replay = GameReplay.objects.find_by_short_id(id)
 		if not replay:
-			return Http404()
+			raise Http404("Replay not found")
 
 		# TODO: IP caching in redis
 		replay.views += 1
@@ -41,5 +41,5 @@ class ReplayEmbedView(View):
 	def get(self, request, id):
 		replay = GameReplay.objects.find_by_short_id(id)
 		if not replay:
-			return Http404()
+			raise Http404("Replay not found")
 		return render(request, "games/replay_embed.html", {"replay": replay})
