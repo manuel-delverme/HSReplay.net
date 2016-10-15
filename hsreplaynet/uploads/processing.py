@@ -26,7 +26,7 @@ def queue_raw_uploads_for_processing(attempt_reprocessing, limit=None):
 	from hsreplaynet.utils.aws.streams import fill_stream_from_iterable
 	logger.info("Starting - Queue all raw uploads for processing")
 
-	publisher_func = aws.publish_raw_upload_to_processing_stream
+	publisher_func = aws.publish_raw_upload_batch_to_processing_stream
 	iterable = generate_raw_uploads_for_processing(attempt_reprocessing, limit)
 	stream_name = settings.KINESIS_UPLOAD_PROCESSING_STREAM_NAME
 	fill_stream_from_iterable(stream_name, iterable, publisher_func)
@@ -67,7 +67,7 @@ def queue_upload_events_for_reprocessing(events, use_kinesis=False):
 	if settings.ENV_AWS or use_kinesis:
 		from hsreplaynet.utils.aws.streams import fill_stream_from_iterable
 		iterable = _generate_raw_uploads_from_events(events)
-		publisher_func = aws.publish_raw_upload_to_processing_stream
+		publisher_func = aws.publish_raw_upload_batch_to_processing_stream
 		stream_name = settings.KINESIS_UPLOAD_PROCESSING_STREAM_NAME
 		fill_stream_from_iterable(stream_name, iterable, publisher_func)
 	else:
