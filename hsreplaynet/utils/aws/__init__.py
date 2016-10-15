@@ -18,6 +18,16 @@ def publish_raw_upload_to_processing_stream(raw_upload):
 	)
 
 
+def publish_raw_upload_batch_to_processing_stream(raw_uploads):
+	records = [dict(Data=r.kinesis_data, PartitionKey=r.kinesis_partition_key)
+			   for r in raw_uploads]
+
+	return KINESIS.put_records(
+		Records=records,
+		StreamName=settings.KINESIS_UPLOAD_PROCESSING_STREAM_NAME,
+	)
+
+
 def get_processing_stream_max_writes_per_second():
 	stream = KINESIS.describe_stream(
 		StreamName=settings.KINESIS_UPLOAD_PROCESSING_STREAM_NAME,
