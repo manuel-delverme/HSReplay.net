@@ -266,32 +266,7 @@ def process_upload_event(upload_event):
 		upload_event.status = UploadEventStatus.SUCCESS
 		upload_event.save()
 
-		if not upload_event.test_data:
-			capture_class_distribution_stats(replay)
-
 	return replay
-
-
-def capture_class_distribution_stats(replay):
-	fields = {
-		"num_turns": replay.global_game.num_turns,
-		"opposing_player_deck_digest": replay.opposing_player.deck_list.digest,
-		"friendly_player_deck_digest": replay.friendly_player.deck_list.digest,
-	}
-
-	tags = {
-		"game_type": replay.global_game.game_type,
-		"scenario_id": replay.global_game.scenario_id,
-		"region": replay.friendly_player.account_hi,
-		"opposing_player_rank": replay.opposing_player.rank,
-		"opposing_player_class": replay.opposing_player.hero.card_class.name,
-		"opposing_player_final_state": replay.opposing_player.final_state,
-		"friendly_player_rank": replay.friendly_player.rank,
-		"friendly_player_class": replay.friendly_player.hero.card_class.name,
-		"friendly_player_final_state": replay.friendly_player.final_state,
-	}
-
-	influx_metric("replay_outcome_stats", fields=fields, **tags)
 
 
 def parse_upload_event(upload_event, meta):

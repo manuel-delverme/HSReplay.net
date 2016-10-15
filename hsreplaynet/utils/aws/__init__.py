@@ -19,8 +19,12 @@ def publish_raw_upload_to_processing_stream(raw_upload):
 
 
 def publish_raw_upload_batch_to_processing_stream(raw_uploads):
-	records = [dict(Data=r.kinesis_data, PartitionKey=r.kinesis_partition_key)
-			   for r in raw_uploads]
+	records = []
+	for upload in raw_uploads:
+		records.append(dict(
+			Data=upload.kinesis_data,
+			PartitionKey=upload.kinesis_partition_key
+		))
 
 	return KINESIS.put_records(
 		Records=records,
