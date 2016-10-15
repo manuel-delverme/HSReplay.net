@@ -6,9 +6,36 @@ import re
 from collections import defaultdict
 from datetime import datetime, date, timedelta
 from django.conf import settings
+from django.db import connection
+from django.utils import timezone
 from hsreplaynet.uploads.models import RawUpload, UploadEvent
 from hsreplaynet.utils import instrumentation, log, aws
 from hsreplaynet.utils.influx import influx_metric
+
+
+@instrumentation.lambda_handler(cpu_seconds=300, tracing=False)
+def reap_upload_events(event, context):
+	"""A periodic job to cleanup old upload events."""
+	current_timestamp = timezone.now()
+	reap_upload_events_asof(
+		current_timestamp.year,
+		current_timestamp.month,
+		current_timestamp.day,
+		current_timestamp.hour
+	)
+
+
+def reap_upload_events_asof(year, month, day, hour):
+	success_reaping_delay = settings.SUCCESSFUL_UPLOAD_EVENT_REAPING_DELAY_DAYS
+	nonsuccess_reaping_delay = settings.UNSUCCESSFUL_UPLOAD_EVENT_REAPING_DELAY_DAYS
+
+	cursor = connection.cursor()
+	args = (year, month, day, hour, success_reaping_delay, nonsuccess_reaping_delay,)
+	# Note: this stored proc will only delete the DB records
+	# The objects in S3 will age out naturally after 90 days
+	# according to our bucket's object lifecycle policy
+	cursor.callproc("reap_upload_events", args)
+	cursor.close()
 
 
 @instrumentation.lambda_handler(cpu_seconds=300, tracing=False)

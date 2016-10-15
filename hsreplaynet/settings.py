@@ -273,6 +273,9 @@ LAMBDA_DEFAULT_EXECUTION_ROLE_NAME = "iam_lambda_execution_role"
 # Orphan descriptor.json files created this many days previously will be automatically reaped.
 LAMBDA_ORPHAN_REAPING_DELAY_DAYS = 3
 
+SUCCESSFUL_UPLOAD_EVENT_REAPING_DELAY_DAYS = 5
+UNSUCCESSFUL_UPLOAD_EVENT_REAPING_DELAY_DAYS = 30
+
 JOUST_STATIC_URL = "https://joust.hearthsim.net/branches/master/"
 HEARTHSTONEJSON_URL = "https://api.hearthstonejson.com/v1/%(build)s/%(locale)s/cards.json"
 HEARTHSTONE_ART_URL = "https://art.hearthstonejson.com/v1/256x/"
