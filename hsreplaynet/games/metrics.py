@@ -29,16 +29,17 @@ class InstrumentedExporter(EntityTreeExporter):
 		game_type = BnetGameType(self._meta.get("game_type", 0)).name
 
 		payload = {
-			"measurement": "played_cards",
+			"measurement": "played_card_stats",
 			"tags": {
 				"game_type": game_type,
-				"region": player.account_hi,
 				"card_id": entity.card_id,
+			},
+			"fields": {
+				"rank": self.to_rank_bucket(player_meta.get("rank")),
 				"mana": self.to_mana_crystals(player),
 				"hero": self.to_hero_class(player),
-				"rank": self.to_rank_bucket(player_meta.get("rank")),
+				"region": player.account_hi,
 			},
-			"fields": {},
 			"time": timestamp.isoformat()
 		}
 
