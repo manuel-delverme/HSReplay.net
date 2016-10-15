@@ -463,6 +463,6 @@ def do_process_upload_event(upload_event):
 	)
 
 	if not upload_event.test_data:
-		exporter.write_payload(replay.shortid)
+		exporter.write_payload(replay.replay_xml.name)
 
 	return replay
