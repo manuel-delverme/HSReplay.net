@@ -1,5 +1,4 @@
 import json
-import traceback
 from hashlib import sha1
 from io import StringIO
 from dateutil.parser import parse as dateutil_parse
@@ -250,8 +249,9 @@ def process_upload_event(upload_event):
 	try:
 		replay = do_process_upload_event(upload_event)
 	except Exception as e:
+		from traceback import format_exc
 		upload_event.error = str(e)
-		upload_event.traceback = traceback.format_exc()
+		upload_event.traceback = format_exc()
 		upload_event.status, reraise = handle_upload_event_exception(e)
 		upload_event.save()
 		if reraise:
