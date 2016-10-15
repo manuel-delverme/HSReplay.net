@@ -5,9 +5,11 @@ from dateutil.parser import parse as dateutil_parse
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from hearthstone import __version__ as hslog_version
 from hearthstone.enums import CardType, GameTag
 from hearthstone.hslog.parser import LogParser
 from hearthstone.hslog.export import EntityTreeExporter
+from hsreplay import __version__ as hsreplay_version
 from hsreplay.document import HSReplayDocument
 from hsreplaynet.cards.models import Card, Deck
 from hsreplaynet.utils import guess_ladder_season, log
@@ -160,7 +162,8 @@ def find_or_create_replay(parser, entity_tree, meta, upload_event, global_game, 
 		"upload_token": upload_event.token,
 		"won": friendly_player.won,
 		"replay_xml": replay_xml_path,
-		"hsreplay_version": hsreplay_doc.version,
+		"hsreplay_version": hsreplay_version,
+		"hslog_version": hslog_version,
 	}
 
 	# Create and save hsreplay.xml file

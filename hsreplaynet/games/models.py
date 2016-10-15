@@ -304,8 +304,13 @@ class GameReplay(models.Model):
 
 	replay_xml = models.FileField(upload_to=generate_upload_path)
 	hsreplay_version = models.CharField(
-		"HSReplay version",
-		max_length=8, help_text="The HSReplay spec version of the HSReplay XML file",
+		"HSReplay library version",
+		max_length=16, help_text="The HSReplay library version used to generate the replay",
+	)
+	hslog_version = models.CharField(
+		"hslog library version",
+		max_length=24, help_text="The python-hearthstone library version at processing",
+		null=True,  # TODO: Remove this once the table is clean of NULLs
 	)
 
 	# The fields below capture the preferences of the user who uploaded it.
