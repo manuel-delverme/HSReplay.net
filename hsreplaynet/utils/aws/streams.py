@@ -28,7 +28,7 @@ def publish_from_iterable_at_fixed_speed(
 		try:
 			start_time = time.time()
 			records_this_second = 0
-			while records_this_second < max_records_per_second:
+			while not finished and records_this_second < max_records_per_second:
 				# NOTE: If the aggregate data published exceeds 1MB / second there will
 				# be write throughput failures.
 				# As Of 9-20-16 the average record was ~ 180 Bytes
@@ -57,6 +57,7 @@ def next_record_batch_of_size(iterable, max_batch_size):
 		result.append(record)
 		count += 1
 		record = next(iterable, None)
+	return result
 
 
 def fill_stream_from_iterable(stream_name, iterable, publisher_func):
