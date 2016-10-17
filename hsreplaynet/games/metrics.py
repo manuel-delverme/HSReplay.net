@@ -26,7 +26,12 @@ class InstrumentedExporter(EntityTreeExporter):
 
 		if not player.starting_hero:
 			return
-		game_type = BnetGameType(self._meta.get("game_type", 0)).name
+
+		game_type = self._meta.get("game_type", 0)
+		try:
+			game_type = BnetGameType(game_type).name
+		except Exception:
+			game_type = "UNKNOWN_%s" % (game_type)
 
 		payload = {
 			"measurement": "played_card_stats",
