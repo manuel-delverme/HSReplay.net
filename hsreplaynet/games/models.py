@@ -202,6 +202,21 @@ class GlobalGamePlayer(models.Model):
 	def won(self):
 		return self.final_state in (PlayState.WINNING, PlayState.WON)
 
+	@property
+	def opponent(self):
+		try:
+			if self.player_id == 1:
+				return GlobalGamePlayer.objects.get(game=self.game_id, player_id=2)
+			else:
+				return GlobalGamePlayer.objects.get(game=self.game_id, player_id=1)
+		except:
+			# Some games where processing failed midway through do not have both players
+			return None
+
+	@property
+	def hero_class_name(self):
+		return self.hero.card_class.name
+
 
 class Visibility(IntEnum):
 	Public = 1
