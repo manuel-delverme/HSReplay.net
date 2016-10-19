@@ -1,7 +1,9 @@
 import hashlib
 import random
+import pickle
 from datetime import datetime
 from django.db import models, connection
+from django.core.files.base import ContentFile
 from hearthstone import enums
 from hsreplaynet.utils.fields import IntEnumField
 
@@ -48,8 +50,12 @@ class ClassifierManager(models.Manager):
 		"""
 		result = Classifier()
 		# TODO: Logic to generate the new classifier goes here.
+
 		# Make sure at the end of training the resulting state is picked and saved to the
-		# Classifier.classifier_cache field
+		# Classifier.classifier_cache field, e.g.
+		classifier_data = {"weights": []}
+		classifier_pickle = ContentFile(pickle.dumps(classifier_data))
+		result.classifier_cache.save("classifier.pickle", classifier_pickle)
 		return result
 
 	def classifier_for(self, as_of_date):
@@ -131,13 +137,20 @@ class Classifier(models.Model):
 		# TODO: This should return an instance of Archetype or None
 		# Note, the classifier should select among the approved Archetypes
 		candidates = Archetype.objects.filter(approved=True).all()
-		# Use the self.classifier_cache field to pull down any state the classifier needs
-		# Keep this state in memory if possible
-		# If it's not in memory check if it's in /tmp
-		# If it's not in /tmp then pull it down from S3
+
+		# classifier_data = {"weights": []}
+		# It will be whatever objects were pickled on Line: 56
+		classifier_data = self._retrieve_classifier_weights_from_cache()
 
 		# Determine here which candidate is correct, or None if one can't be found.
 		return None
+
+	def _retrieve_classifier_weights_from_cache(self):
+		if not hasattr(self,"_current_classifier_data"):
+			self.classifier_cache.open(mode="rb")
+			classifier = pickle.loads(self.classifier_cache.read())
+			self._current_classifier_data = classifier
+		return self._current_classifier_data
 
 	def _generate_and_update_archetypes(self):
 		# Calling this is only legal if this Classifier is being installed as the current
