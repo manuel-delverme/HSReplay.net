@@ -2,7 +2,7 @@
 	"name": "hsreplaynet",
 	"private": true,
 	"scripts": {
-		"install": "typings install --production",
+		"postinstall": "typings install --production",
 		"build": "webpack --optimize-minimize --bail"
 	},
 	"dependencies": {
