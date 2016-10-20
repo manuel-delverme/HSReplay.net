@@ -35,6 +35,13 @@ def reap_upload_events_asof(year, month, day, hour):
 	# The objects in S3 will age out naturally after 90 days
 	# according to our bucket's object lifecycle policy
 	cursor.callproc("reap_upload_events", args)
+	result_row = cursor.fetchone()
+	successful_reaped = result_row[0]
+	unsuccessful_reaped = result_row[1]
+	influx_metric("upload_events_reaped", fields={
+		"successful_reaped": successful_reaped,
+		"unsuccessful_reaped": unsuccessful_reaped
+	})
 	cursor.close()
 
 

@@ -12,13 +12,16 @@ CREATE OR REPLACE FUNCTION reap_upload_events(
     asof_day integer,
     asof_hour integer,
     success_retention_days integer,
-    nonsuccess_retention_days integer) RETURNS void AS $$
+    nonsuccess_retention_days integer)
+RETURNS TABLE (reaped_successes int, reaped_nonsuccesses int) AS $$
 DECLARE
     asof_timestamp timestamp;
     success_horizon_start timestamp;
     success_horizon_end timestamp;
     nonsuccess_horizon_start timestamp;
     nonsuccess_horizon_end timestamp;
+    reaped_successes_count int;
+    reaped_nonsuccesses_count int;
 BEGIN
     asof_timestamp = (asof_year || '-' || asof_month || '-' || asof_day || ' ' || asof_hour || ':00')::TIMESTAMP;
 
@@ -28,13 +31,29 @@ BEGIN
     nonsuccess_horizon_start = asof_timestamp - (nonsuccess_retention_days || ' days')::interval;
     nonsuccess_horizon_end = nonsuccess_horizon_start + INTERVAL '1 hour';
 
+	-- Note, the objects in S3 related to uploadevents will automatically be garabage collected by S3 after 90 days per our bucket policy
     -- First delete all the successes
-    DELETE FROM uploads_uploadevent WHERE status = 4 AND created BETWEEN success_horizon_start AND success_horizon_end;
+    WITH reaped_successes as (
+    	DELETE FROM uploads_uploadevent
+    	WHERE status = 4
+    	AND created BETWEEN success_horizon_start AND success_horizon_end
+    	RETURNING 1
+    )
+    SELECT count(*) INTO reaped_successes_count FROM reaped_successes;
 
     -- Then delete all the nonsuccesses
-    DELETE FROM uploads_uploadevent WHERE status != 4 AND created BETWEEN nonsuccess_horizon_start AND nonsuccess_horizon_end;
+    WITH reaped_nonsuccesses as (
+    	DELETE FROM uploads_uploadevent
+    	WHERE status != 4
+    	AND created BETWEEN nonsuccess_horizon_start AND nonsuccess_horizon_end
+    	RETURNING 1
+    )
+    SELECT count(*) INTO reaped_nonsuccesses_count FROM reaped_nonsuccesses;
 
-    -- Note, the objects in S3 related to uploadevents will automatically be garabage collected by S3 after 90 days per our bucket policy
+
+    RETURN QUERY SELECT reaped_successes_count, reaped_nonsuccesses_count;
+	RETURN;
+
 END;
 $$ LANGUAGE plpgsql;
 """
