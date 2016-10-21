@@ -7,8 +7,9 @@ from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from hearthstone import __version__ as hslog_version
 from hearthstone.enums import CardType, GameTag
-from hearthstone.hslog.parser import LogParser
+from hearthstone.hslog.exceptions import ParsingError
 from hearthstone.hslog.export import EntityTreeExporter
+from hearthstone.hslog.parser import LogParser
 from hsreplay import __version__ as hsreplay_version
 from hsreplay.document import HSReplayDocument
 from hsreplaynet.cards.models import Card, Deck
@@ -23,10 +24,6 @@ from .models import (
 
 
 class ProcessingError(Exception):
-	pass
-
-
-class ParsingError(ProcessingError):
 	pass
 
 
@@ -227,7 +224,7 @@ def handle_upload_event_exception(e):
 	If reraise is True, the exception will bubble up.
 	"""
 	if isinstance(e, ParsingError):
-		return UploadEventStatus.PARSING_ERROR, True
+		return UploadEventStatus.PARSING_ERROR, False
 	elif isinstance(e, (GameTooShort, EntityTreeExporter.EntityNotFound)):
 		return UploadEventStatus.UNSUPPORTED, False
 	elif isinstance(e, UnsupportedReplay):
@@ -283,14 +280,10 @@ def parse_upload_event(upload_event, meta):
 	powerlog = StringIO(log_bytes.decode("utf-8"))
 	upload_event.file.close()
 
-	try:
-		parser = LogParser()
-		parser._game_state_processor = "GameState"
-		parser._current_date = match_start
-		parser.read(powerlog)
-	except Exception as e:
-		log.exception("Got exception %r while parsing log", e)
-		raise ParsingError(str(e))  # from e
+	parser = LogParser()
+	parser._game_state_processor = "GameState"
+	parser._current_date = match_start
+	parser.read(powerlog)
 
 	return parser
 
