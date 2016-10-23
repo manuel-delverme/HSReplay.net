@@ -63,6 +63,7 @@ class User(AbstractUser):
 		enum=Visibility, default=Visibility.Public
 	)
 	exclude_from_statistics = models.BooleanField(default=False)
+	joust_autoplay = models.BooleanField(default=True)
 
 	def delete_replays(self):
 		self.replays.update(is_deleted=True)

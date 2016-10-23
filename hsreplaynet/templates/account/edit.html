@@ -6,7 +6,7 @@
 		{% csrf_token %}
 
 		<section id="account-locale" class="box-section">
-			<h3>Replay language</h3>
+			<h3>Replay settings</h3>
 			<div class="inner">
 				<p>
 					Choose your preferred replay language from the ones that are supported by Hearthstone.
@@ -17,7 +17,16 @@
 				<p class="help-block">
 					This currently only affects cards in the replays, not the replayer or the site itself.
 				</p>
-
+				<hr/>
+				<p>
+					Enable or disable auto-play of replays on the site.
+				</p>
+				<p>
+					<label>
+						{{ form.joust_autoplay }}
+						Automatically play replays when viewing them
+					</label>
+				</p>
 			</div>
 		</section>
 
