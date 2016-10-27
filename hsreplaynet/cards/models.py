@@ -1,6 +1,7 @@
 import hashlib
 import random
 from django.db import models, connection
+from django.conf import settings
 from hearthstone import enums
 from hsreplaynet.utils.fields import IntEnumField
 
@@ -106,7 +107,18 @@ class Card(models.Model):
 
 
 class DeckManager(models.Manager):
-	def get_or_create_from_id_list(self, id_list):
+	def get_or_create_from_id_list(self, id_list, hero_id=None, game_type=None):
+		deck, created = self._get_or_create_deck_from_db(id_list)
+
+		archetypes_enabled = settings.ARCHETYPE_CLASSIFICATION_ENABLED
+		if archetypes_enabled and created:
+			player_class = self._convert_hero_id_to_player_class(hero_id)
+			format = self._convert_game_type_to_format(game_type)
+			self.classify_deck_with_archetype(deck, player_class, format)
+
+		return deck, created
+
+	def _get_or_create_deck_from_db(self, id_list):
 		if len(id_list):
 			# This native implementation in the DB is to reduce the volume
 			# of DB chatter between Lambdas and the DB
@@ -120,6 +132,38 @@ class DeckManager(models.Manager):
 		else:
 			digest = generate_digest_from_deck_list(id_list)
 			return Deck.objects.get_or_create(digest=digest)
+
+	def _convert_hero_id_to_player_class(self, hero_id):
+		if hero_id:
+			return Card.objects.get(id=hero_id).card_class
+		return enums.CardClass.INVALID
+
+	def _convert_game_type_to_format(self, game_type):
+		# TODO: Move this to be a helper on the enum itself
+		STANDARD_GAME_TYPES = [
+			enums.BnetGameType.BGT_CASUAL_STANDARD,
+			enums.BnetGameType.BGT_RANKED_STANDARD,
+		]
+		WILD_GAME_TYPES = [
+			enums.BnetGameType.BGT_CASUAL_WILD,
+			enums.BnetGameType.BGT_RANKED_WILD,
+			enums.BnetGameType.BGT_ARENA
+		]
+
+		if game_type:
+			if game_type in STANDARD_GAME_TYPES:
+				return enums.FormatType.FT_STANDARD
+			elif game_type in WILD_GAME_TYPES:
+				return enums.FormatType.FT_WILD
+
+		return enums.FormatType.FT_UNKNOWN
+
+	def classify_deck_with_archetype(self, deck, player_class, format):
+		from hsreplaynet.cards.archetypes import classify_deck
+		archetype = classify_deck(deck, player_class, format)
+		if archetype:
+			deck.archetype = archetype
+			deck.save()
 
 
 def generate_digest_from_deck_list(id_list):
@@ -207,6 +251,16 @@ class Include(models.Model):
 		unique_together = ("deck", "card")
 
 
+class ArchetypeManager(models.Manager):
+	def archetypes_for_class(self, player_class, format):
+		result = {}
+
+		for archetype in Archetype.objects.filter(player_class=player_class):
+			result[archetype] = archetype.canonical_deck(format)
+
+		return result
+
+
 class Archetype(models.Model):
 	"""
 	Archetypes cluster decks with minor card variations that all share the same strategy
@@ -215,21 +269,20 @@ class Archetype(models.Model):
 	E.g. 'Freeze Mage', 'Miracle Rogue', 'Pirate Warrior', 'Zoolock', 'Control Priest'
 	"""
 	id = models.BigAutoField(primary_key=True)
+	objects = ArchetypeManager()
 	name = models.CharField(max_length=250, blank=True)
 	player_class = IntEnumField(enum=enums.CardClass, default=enums.CardClass.INVALID)
 
 	def canonical_deck(self, format=enums.FormatType.FT_STANDARD, as_of=None):
 		if as_of is None:
-			canonical = CanonicalDeck.objects.filter(
-				archetype=self,
+			canonical = self.canonical_decks.filter(
 				format=format,
-			).order_by('-created').first()
+			).order_by('-created').prefetch_related("deck__includes").first()
 		else:
-			canonical = CanonicalDeck.objects.filter(
-				archetype=self,
+			canonical = self.canonical_decks.filter(
 				format=format,
 				created__lte=as_of
-			).order_by('-created').first()
+			).order_by('-created').prefetch_related("deck__includes").first()
 
 		if canonical:
 			return canonical.deck

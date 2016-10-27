@@ -353,8 +353,13 @@ def update_global_players(global_game, entity_tree, meta):
 			decklist = [c.card_id for c in player.initial_deck if c.card_id]
 
 		name, real_name = get_player_names(player)
+		player_hero_id = player._hero.card_id
 
-		deck, created = Deck.objects.get_or_create_from_id_list(decklist)
+		deck, created = Deck.objects.get_or_create_from_id_list(
+			decklist,
+			player_hero_id,
+			global_game.game_type
+		)
 		log.debug("Prepared deck %i (created=%r)", deck.id, created)
 
 		common = {
@@ -366,7 +371,7 @@ def update_global_players(global_game, entity_tree, meta):
 			"account_lo": player.account_lo,
 			"is_first": player.tags.get(GameTag.FIRST_PLAYER, False),
 			"is_ai": player.is_ai,
-			"hero_id": player._hero.card_id,
+			"hero_id": player_hero_id,
 			"hero_premium": player._hero.tags.get(GameTag.PREMIUM, False),
 			"final_state": player.tags.get(GameTag.PLAYSTATE, 0),
 			"deck_list": deck,

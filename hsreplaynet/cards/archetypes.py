@@ -1,5 +1,71 @@
 from collections import defaultdict
-from hearthstone.enums import Race, CardClass
+from hearthstone.enums import Race, CardClass, FormatType
+from .models import Archetype
+
+
+def edit_distance(canonical_list, unclassified_deck):
+	"""Determines the edit distance to transform the unclassified deck into the canonical"""
+	UNREVEALED = "*"
+	UNREVEALED_PENALTY = .5
+	DELETE_PENALTY = 1.0
+	INSERT_PENALTY = 1.0
+
+	unrevealed_deck = [UNREVEALED for i in range(30 - len(unclassified_deck))]
+	normalized_deck = unclassified_deck.card_id_list() + unrevealed_deck
+	distance = 0.0
+
+	canonical_copy = list(canonical_list.card_id_list())
+	for card in normalized_deck:
+		if card == UNREVEALED:
+			distance += UNREVEALED_PENALTY
+		elif card in canonical_copy:
+			canonical_copy.pop(canonical_copy.index(card))
+		else:
+			distance += DELETE_PENALTY
+
+	distance += (len(canonical_copy) * INSERT_PENALTY)
+
+	return distance
+
+
+def classify_deck(
+	unclassified_deck,
+	player_class=CardClass.INVALID,
+	format=FormatType.FT_UNKNOWN
+):
+	""" Return an Archetype or None
+
+	Classification proceeds in two steps:
+
+	1) First a set of explicit rules is executed, if the deck matches against any of these
+	rules, then the Archetype is automatically assigned.
+
+	2) Second, if no Archetype was discovered than an Archetype was assigned by determining
+	the minimum edit distance to an existing Archetype.
+
+	However, if the deck is not within at least 5 cards from an Archetype then no Archetype
+	will be assigned.
+	"""
+
+	candidates = Archetype.objects.archetypes_for_class(player_class, format)
+
+	distances = []
+	# 5 divergent cards will require 10 units of distance
+	# 5 units for the deletes and 5 for the inserts
+	# Likewise a partial deck of 10 or more cards that perfectly matches an Archetype
+	# Will make the cutoff since 20 UNREVEALED cards will also have a distance of 10
+	CUTOFF_DISTANCE = 10
+	for archetype, canonical_deck in candidates.items():
+		dist = edit_distance(canonical_deck, unclassified_deck)
+		if dist <= CUTOFF_DISTANCE:
+			distances.append((archetype, dist))
+
+	if distances:
+		return sorted(distances, key=lambda t: t[1])[0][0]
+	else:
+		return None
+
+# ##### ALL CODE BELOW IS PART OF THE EXPERT SYSTEM MODEL FOR CLASSIFICATION ##### #
 
 MALYGOS = "EX1_563"
 CURATOR = "KAR_061"
