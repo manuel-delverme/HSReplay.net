@@ -5,25 +5,27 @@ from .models import Archetype
 
 def edit_distance(canonical_list, unclassified_deck):
 	"""Determines the edit distance to transform the unclassified deck into the canonical"""
-	UNREVEALED = "*"
 	UNREVEALED_PENALTY = .5
 	DELETE_PENALTY = 1.0
 	INSERT_PENALTY = 1.0
 
-	unrevealed_deck = [UNREVEALED for i in range(30 - len(unclassified_deck))]
-	normalized_deck = unclassified_deck.card_id_list() + unrevealed_deck
+	unrevealed_count = 30 - unclassified_deck.size()
 	distance = 0.0
-
+	delete_count = 0
 	canonical_copy = list(canonical_list.card_id_list())
-	for card in normalized_deck:
-		if card == UNREVEALED:
-			distance += UNREVEALED_PENALTY
-		elif card in canonical_copy:
+	for card in unclassified_deck.card_id_list():
+		if card in canonical_copy:
 			canonical_copy.pop(canonical_copy.index(card))
 		else:
-			distance += DELETE_PENALTY
+			delete_count += 1
 
-	distance += (len(canonical_copy) * INSERT_PENALTY)
+	total_remaining_inserts = len(canonical_copy)
+	partial_insert_penalty_units = unrevealed_count
+	full_insert_penalty_units = total_remaining_inserts - partial_insert_penalty_units
+
+	distance += (partial_insert_penalty_units * UNREVEALED_PENALTY)
+	distance += (full_insert_penalty_units * INSERT_PENALTY)
+	distance += (delete_count * DELETE_PENALTY)
 
 	return distance
 
@@ -38,7 +40,7 @@ def classify_deck(
 	Classification proceeds in two steps:
 
 	1) First a set of explicit rules is executed, if the deck matches against any of these
-	rules, then the Archetype is automatically assigned.
+	rules, then the Archetype is automatically assigned (Not Yet Implemented).
 
 	2) Second, if no Archetype was discovered than an Archetype was assigned by determining
 	the minimum edit distance to an existing Archetype.

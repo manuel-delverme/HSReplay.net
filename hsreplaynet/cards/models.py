@@ -107,11 +107,17 @@ class Card(models.Model):
 
 
 class DeckManager(models.Manager):
-	def get_or_create_from_id_list(self, id_list, hero_id=None, game_type=None):
+	def get_or_create_from_id_list(
+		self,
+		id_list,
+		hero_id=None,
+		game_type=None,
+		classify_into_archetype=False
+	):
 		deck, created = self._get_or_create_deck_from_db(id_list)
 
 		archetypes_enabled = settings.ARCHETYPE_CLASSIFICATION_ENABLED
-		if archetypes_enabled and created:
+		if archetypes_enabled and classify_into_archetype and created:
 			player_class = self._convert_hero_id_to_player_class(hero_id)
 			format = self._convert_game_type_to_format(game_type)
 			self.classify_deck_with_archetype(deck, player_class, format)

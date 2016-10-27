@@ -120,7 +120,7 @@ upload_regression_suite = pytest.mark.skipif(
 
 @upload_regression_suite
 @pytest.mark.django_db
-def test_upload_regression_suite(hsreplaynet_card_db):
+def test_upload_regression_suite():
 	if os.path.exists(UPLOAD_SUITE):
 		for shortid in os.listdir(UPLOAD_SUITE):
 			raw_upload = MockRawUpload(os.path.join(UPLOAD_SUITE, shortid), default_storage)
