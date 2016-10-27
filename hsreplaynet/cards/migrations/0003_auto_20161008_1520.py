@@ -127,11 +127,11 @@ CREATE_TO_DECK_SUMMARY_STATS_ROW_FUNCTION = """
 		SELECT c.card_class INTO STRICT ret.player_class
 		FROM card c WHERE c.id = player.hero_id;
 
-		-- We use seconds from epoch as our PK, but aggregate to the minute
+		-- We use seconds from epoch as our PK, but aggregate to the hour
 		-- This gives us better storage efficiency, but leaves the door open later
 		-- If we want to start aggregating to smaller intervals, like 10s or 1s
 		SELECT
-			round(date_part('epoch', date_trunc('minute', gg.match_start))),
+			round(date_part('epoch', date_trunc('hour', gg.match_start))),
 			gg.game_type
 		INTO STRICT ret.epoch_seconds, ret.game_type
 		FROM games_globalgame gg
