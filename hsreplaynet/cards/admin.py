@@ -28,8 +28,11 @@ class IncludeInline(admin.TabularInline):
 
 @admin.register(Deck)
 class DeckAdmin(admin.ModelAdmin):
-	date_hierarchy = "created"
+	list_display = ("__str__", "archetype", "created")
 	inlines = (IncludeInline, )
+
+	def get_ordering(self, request):
+		return ["-id"]
 
 
 class CanonicalDeckInline(admin.TabularInline):
