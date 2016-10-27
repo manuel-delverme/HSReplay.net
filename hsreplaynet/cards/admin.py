@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Card, Deck, Include
+from .models import Card, Deck, Include, Archetype, CanonicalDeck
 
 
 @admin.register(Card)
@@ -30,3 +30,13 @@ class IncludeInline(admin.TabularInline):
 class DeckAdmin(admin.ModelAdmin):
 	date_hierarchy = "created"
 	inlines = (IncludeInline, )
+
+
+@admin.register(Archetype)
+class ArchetypeAdmin(admin.ModelAdmin):
+	pass
+
+
+@admin.register(CanonicalDeck)
+class CanonicalDeckAdmin(admin.ModelAdmin):
+	pass
