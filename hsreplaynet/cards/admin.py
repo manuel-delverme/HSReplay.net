@@ -35,21 +35,27 @@ class DeckAdmin(admin.ModelAdmin):
 class CanonicalDeckInline(admin.TabularInline):
 	model = CanonicalDeck
 	raw_id_fields = ("deck",)
+	extra = 0
 
 
 @admin.register(Archetype)
 class ArchetypeAdmin(admin.ModelAdmin):
 	list_display = ("__str__", "player_class_name", "canonical_deck")
+	list_filter = ("player_class",)
 	inlines = (CanonicalDeckInline,)
 
 	def player_class_name(self, obj):
 		return "%s" % obj.player_class.name
 	player_class_name.short_description = "Class"
+	player_class_name.admin_order_field = "player_class"
 
 	def canonical_deck(self, obj):
 		deck = obj.canonical_deck()
 		if deck:
-			return repr(deck)
+			return str(deck)
 		else:
 			return "Not Set"
 	canonical_deck.short_description = "Canonical Deck"
+
+	def get_ordering(self, request):
+		return ["player_class", "name"]

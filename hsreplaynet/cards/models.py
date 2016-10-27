@@ -259,4 +259,4 @@ class CanonicalDeck(models.Model):
 		on_delete=models.PROTECT
 	)
 	created = models.DateTimeField(auto_now_add=True)
-	format = IntEnumField(enum=enums.FormatType, default=enums.FormatType.FT_UNKNOWN)
+	format = IntEnumField(enum=enums.FormatType, default=enums.FormatType.FT_STANDARD)
