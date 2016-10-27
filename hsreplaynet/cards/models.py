@@ -141,6 +141,7 @@ class Deck(models.Model):
 	cards = models.ManyToManyField(Card, through="Include")
 	digest = models.CharField(max_length=32, unique=True, db_index=True)
 	created = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+	archetype = models.ForeignKey("Archetype", null=True, on_delete=models.SET_NULL)
 
 	def __str__(self):
 		return repr(self)
@@ -202,3 +203,55 @@ class Include(models.Model):
 
 	class Meta:
 		unique_together = ("deck", "card")
+
+
+class Archetype(models.Model):
+	"""
+	Archetypes cluster decks with minor card variations that all share the same strategy
+	into a common group.
+
+	E.g. 'Freeze Mage', 'Miracle Rogue', 'Pirate Warrior', 'Zoolock', 'Control Priest'
+	"""
+	id = models.BigAutoField(primary_key=True)
+	name = models.CharField(max_length=250, blank=True)
+	player_class = IntEnumField(enum=enums.CardClass, default=enums.CardClass.INVALID)
+
+	def canonical_deck(self, format=enums.FormatType.FT_STANDARD, as_of=None):
+		if as_of is None:
+			canonical = CanonicalDeck.objects.filter(
+				archtype=self,
+				format=format,
+			).order_by('-created').first()
+		else:
+			canonical = CanonicalDeck.objects.filter(
+				archtype=self,
+				format=format,
+				created__lte=as_of
+			).order_by('-created').first()
+
+		if canonical:
+			return canonical.deck
+		else:
+			return None
+
+
+class CanonicalDeck(models.Model):
+	"""The CanonicalDeck for an Archetype is the list of cards that is most commonly
+	associated with that Archetype.
+
+	The canonical deck for an Archetype may evolve incrementally over time and is likely to
+	evolve more rapidly when new card sets are first released.
+	"""
+	id = models.BigAutoField(primary_key=True)
+	archetype = models.ForeignKey(
+		Archetype,
+		related_name="canonical_decks",
+		on_delete=models.CASCADE
+	)
+	deck = models.ForeignKey(
+		Deck,
+		related_name="canonical_for_archetypes",
+		on_delete=models.PROTECT
+	)
+	created = models.DateTimeField(auto_now_add=True)
+	format = IntEnumField(enum=enums.FormatType, default=enums.FormatType.FT_UNKNOWN)
