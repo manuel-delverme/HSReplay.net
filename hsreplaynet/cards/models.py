@@ -219,12 +219,12 @@ class Archetype(models.Model):
 	def canonical_deck(self, format=enums.FormatType.FT_STANDARD, as_of=None):
 		if as_of is None:
 			canonical = CanonicalDeck.objects.filter(
-				archtype=self,
+				archetype=self,
 				format=format,
 			).order_by('-created').first()
 		else:
 			canonical = CanonicalDeck.objects.filter(
-				archtype=self,
+				archetype=self,
 				format=format,
 				created__lte=as_of
 			).order_by('-created').first()
@@ -233,6 +233,9 @@ class Archetype(models.Model):
 			return canonical.deck
 		else:
 			return None
+
+	def __str__(self):
+		return self.name
 
 
 class CanonicalDeck(models.Model):

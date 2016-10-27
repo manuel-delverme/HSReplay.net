@@ -34,7 +34,19 @@ class DeckAdmin(admin.ModelAdmin):
 
 @admin.register(Archetype)
 class ArchetypeAdmin(admin.ModelAdmin):
-	pass
+	list_display = ("__str__", "player_class_name", "canonical_deck")
+
+	def player_class_name(self, obj):
+		return "%s" % obj.player_class.name
+	player_class_name.short_description = "Class"
+
+	def canonical_deck(self, obj):
+		deck = obj.canonical_deck()
+		if deck:
+			return repr(deck)
+		else:
+			return "Not Set"
+	canonical_deck.short_description = "Canonical Deck"
 
 
 @admin.register(CanonicalDeck)
