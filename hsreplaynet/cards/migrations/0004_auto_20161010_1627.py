@@ -14,7 +14,7 @@ DROP_INDEX_ON_DECK_SUMMARY_STATS_DECK_ID = """
 """
 
 CREATE_PRETTY_DECK_LIST_STRING_FUNC = """
-	CREATE OR REPLACE FUNCTION pretty_deck_list_string(int)
+	CREATE OR REPLACE FUNCTION pretty_deck_list_string(int8)
 	RETURNS text AS $$
 	SELECT string_agg(c.name || ' x ' || ci.count, ', ' ORDER BY c.cost)
 	FROM cards_include ci
