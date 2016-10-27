@@ -147,8 +147,10 @@ class Deck(models.Model):
 		return repr(self)
 
 	def __repr__(self):
-		values = self.includes.values("card__name", "count")
-		value_map = ["%s x %i" % (c["card__name"], c["count"]) for c in values]
+		values = self.includes.values("card__name", "count", "card__cost")
+		alpha_sorted = sorted(values, key=lambda t: t["card__name"])
+		mana_sorted = sorted(alpha_sorted, key=lambda t: t["card__cost"])
+		value_map = ["%s x %i" % (c["card__name"], c["count"]) for c in mana_sorted]
 		return "[%s]" % (", ".join(value_map))
 
 	def __iter__(self):
