@@ -287,7 +287,7 @@ HSREPLAY_FACEBOOK_APP_ID="1278788528798942"
 # Add `CONNECT_TO_AWS = True` in local_settings.py if you need to use those locally.
 CONNECT_TO_AWS = ENV_AWS
 
-ARCHETYPE_CLASSIFICATION_ENABLED = False
+ARCHETYPE_CLASSIFICATION_ENABLED = True
 
 # Monkeypatch default collectstatic ignore patterns
 from django.contrib.staticfiles.apps import StaticFilesConfig

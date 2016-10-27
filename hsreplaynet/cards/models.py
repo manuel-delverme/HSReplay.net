@@ -132,9 +132,12 @@ class DeckManager(models.Manager):
 			cursor.callproc("get_or_create_deck", (id_list,))
 			result_row = cursor.fetchone()
 			deck_id = int(result_row[0])
-			created = result_row[1]
+			created_ts = result_row[1]
+			digest = result_row[2]
+			created = result_row[3]
 			cursor.close()
-			return Deck(id=deck_id), created
+			d = Deck(id=deck_id, created=created_ts, digest=digest)
+			return d, created
 		else:
 			digest = generate_digest_from_deck_list(id_list)
 			return Deck.objects.get_or_create(digest=digest)
@@ -262,7 +265,9 @@ class ArchetypeManager(models.Manager):
 		result = {}
 
 		for archetype in Archetype.objects.filter(player_class=player_class):
-			result[archetype] = archetype.canonical_deck(format)
+			canonical_deck = archetype.canonical_deck(format)
+			if canonical_deck:
+				result[archetype] = canonical_deck
 
 		return result
 

@@ -39,29 +39,31 @@ DROP_DECK_DIGEST_FUNC = """
 """
 
 CREATE_GET_OR_CREATE_DECK_FUNC = """
-	CREATE OR REPLACE FUNCTION get_or_create_deck(text[])
-	RETURNS TABLE (deck_id int, created boolean) AS $$
+CREATE OR REPLACE FUNCTION get_or_create_deck(text[])
+	RETURNS TABLE (deck_id int, deck_creation_ts timestamp, digest text, created boolean) AS $$
 	DECLARE
 		computed_digest text;
 		generated_deck_id int;
 		created boolean;
+		deck_created_ts timestamp;
 	BEGIN
 		-- Compute the deck digest
 		computed_digest = deck_digest($1);
-		SELECT cd.id INTO generated_deck_id
+		SELECT cd.id, cd.created INTO generated_deck_id, deck_created_ts
 		FROM cards_deck cd WHERE cd.digest = computed_digest;
 
 		-- First check whether this deck already exists
 		IF FOUND THEN
 			created = false;
-			RETURN QUERY SELECT generated_deck_id, created;
+			RETURN QUERY SELECT generated_deck_id, deck_created_ts, computed_digest, created;
 			RETURN;
 		END IF;
 
 		-- Since the deck does not exist, we must now create it.
 		BEGIN
+			deck_created_ts = CURRENT_TIMESTAMP;
 			INSERT INTO cards_deck (digest, created)
-			VALUES (computed_digest, current_timestamp)
+			VALUES (computed_digest, deck_created_ts)
 			RETURNING id INTO generated_deck_id;
 
 			INSERT INTO cards_include (deck_id, card_id, count)
@@ -75,13 +77,13 @@ CREATE_GET_OR_CREATE_DECK_FUNC = """
 			-- If an exception is thrown because another thread inserted the deck
 			-- Then just query for the deck ID and let the other thread
 			-- Remain responsible for building the deck
-			SELECT cd.id INTO generated_deck_id
+			SELECT cd.id, cd.created INTO generated_deck_id, deck_created_ts
 			FROM cards_deck cd WHERE cd.digest = computed_digest;
 
 			created = false;
 		END;
 
-		RETURN QUERY SELECT generated_deck_id, created;
+		RETURN QUERY SELECT generated_deck_id, deck_created_ts, computed_digest, created;
 		RETURN;
 	END;
 	$$ LANGUAGE plpgsql;

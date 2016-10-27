@@ -357,8 +357,9 @@ def update_global_players(global_game, entity_tree, meta):
 
 		deck, created = Deck.objects.get_or_create_from_id_list(
 			decklist,
-			player_hero_id,
-			global_game.game_type
+			hero_id=player_hero_id,
+			game_type=global_game.game_type,
+			classify_into_archetype=True
 		)
 		log.debug("Prepared deck %i (created=%r)", deck.id, created)
 
