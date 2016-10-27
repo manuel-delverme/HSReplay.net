@@ -1,5 +1,6 @@
 from collections import defaultdict
 from hearthstone.enums import Race, CardClass, FormatType
+from hsreplaynet.utils import log
 from .models import Archetype
 
 
@@ -48,17 +49,19 @@ def classify_deck(
 	However, if the deck is not within at least 5 cards from an Archetype then no Archetype
 	will be assigned.
 	"""
-
+	log.info("Classifying Deck With Cards: %r" % repr(unclassified_deck))
 	candidates = Archetype.objects.archetypes_for_class(player_class, format)
 
 	distances = []
-	# 5 divergent cards will require 10 units of distance
-	# 5 units for the deletes and 5 for the inserts
-	# Likewise a partial deck of 10 or more cards that perfectly matches an Archetype
-	# Will make the cutoff since 20 UNREVEALED cards will also have a distance of 10
-	CUTOFF_DISTANCE = 10
+	# On average we see 14 cards from the opponents deck
+	# 30 cards: we accept 6 divergent cards, distance is: 12
+	# 20 cards: we accept 4 divergent cards, distance is: 8 + 5 (unrevealed) = 13
+	# 10 cards: we accept 2 divergent cards, distance is: 4 + 10 (unrevealed) = 14
+	# 5 cards: we accept 0 divergent cards, distance is: 12.5 (unrevealed) = 12.5
+	CUTOFF_DISTANCE = 14
 	for archetype, canonical_deck in candidates.items():
 		dist = edit_distance(canonical_deck, unclassified_deck)
+		log.info("Archetype: %s, Distance: %s" % (archetype.name, str(dist)))
 		if dist <= CUTOFF_DISTANCE:
 			distances.append((archetype, dist))
 

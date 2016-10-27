@@ -41,7 +41,7 @@ freeze_mage_variation_short_partial_deck = [
 	"CS2_031",
 	"EX1_015",
 	"EX1_015",
-	"EX1_012",
+	"BRM_002",
 ]
 
 # On average we see 14 cards from the opponents deck list.
