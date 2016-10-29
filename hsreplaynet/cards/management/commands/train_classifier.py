@@ -64,5 +64,4 @@ class Command(BaseCommand):
 
 		cursor = connection.cursor()
 		cursor.execute(QUERY % lookback)
-		iter = iter(cursor.fetchall())
-		Classifier.objects.train_classifier(iter)
+		Classifier.objects.train_classifier(iter(cursor.fetchall()))

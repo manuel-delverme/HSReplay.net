@@ -1,12 +1,15 @@
 import hashlib
-import random
 import pickle
+import random
 from datetime import datetime
-from django.db import models, connection
-from django.core.files.base import ContentFile
+
 from django.conf import settings
+from django.core.files.base import ContentFile
+from django.db import models, connection
 from hearthstone import enums
+
 from hsreplaynet.utils.fields import IntEnumField
+
 
 ### WORK-IN-PROGRESS - START ###
 
@@ -50,11 +53,12 @@ class ClassifierManager(models.Manager):
 		:param deck_list_iter: The iterable of tuples passed into train_classifier()
 		"""
 		result = Classifier()
-		# TODO: Logic to generate the new classifier goes here.
+		from scripts.detect_archetype import DeckClassifier
+		classifier = DeckClassifier(settings.CLASSIFIER_CONFIG)
 
 		# Make sure at the end of training the resulting state is picked and saved to the
 		# Classifier.classifier_cache field, e.g.
-		classifier_data = {"weights": []}
+		classifier_data = classifier.classifier_state
 		classifier_pickle = ContentFile(pickle.dumps(classifier_data))
 		result.classifier_cache.save("classifier.pickle", classifier_pickle)
 		return result
@@ -459,7 +463,6 @@ class Include(models.Model):
 
 	class Meta:
 		unique_together = ("deck", "card")
-
 
 class ArchetypeManager(models.Manager):
 	def archetypes_for_class(self, player_class, format):

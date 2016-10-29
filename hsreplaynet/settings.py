@@ -288,6 +288,11 @@ HSREPLAY_FACEBOOK_APP_ID="1278788528798942"
 CONNECT_TO_AWS = ENV_AWS
 
 ARCHETYPE_CLASSIFICATION_ENABLED = True
+CLASSIFIER_CONFIG = {
+	'min_samples_modifier': 1,
+	'eps_modifier': 1,
+	'data_file': 'Deck_List_Training_Data.csv'
+}
 
 # Monkeypatch default collectstatic ignore patterns
 from django.contrib.staticfiles.apps import StaticFilesConfig
