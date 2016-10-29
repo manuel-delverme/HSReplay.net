@@ -46,11 +46,7 @@ $(document).ready(function() {
 			shim.innerText = "{% filter escapejs %}{% include 'games/svg-paths-shim.css' with svg='/static/svg-paths.svg' %}{% endfilter %}";
 			document.getElementsByTagName("head")[0].appendChild(shim);
 
-			JoustExtra.setup({
-				hearthstonejson: "{% setting 'HEARTHSTONEJSON_URL' %}"
-			});
 			Joust.launcher("joust-promo-container")
-				.metadata(JoustExtra.metadata)
 				.assets("{% joust_static 'assets/' %}")
 				.cardArt("{% setting 'HEARTHSTONE_ART_URL' %}")
 				.width("100%")
@@ -63,10 +59,10 @@ $(document).ready(function() {
 		window.dispatchEvent(event);
 	};
 	$("#feat-joust-screenshot").click(function(e) {
-		e.preventDefault();
 		$("#joust-lightbox").fadeIn();
 		joust_check();
 		trigger_resize();
+		e.preventDefault();
 	});
 });
 

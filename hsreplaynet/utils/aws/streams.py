@@ -10,29 +10,54 @@ from .clients import KINESIS
 logger = logging.getLogger("hsreplaynet")
 
 KINESIS_WRITES_PER_SEC = 1000
+KINESIS_MAX_BATCH_WRITE_SIZE = 500
 MAX_WRITES_SAFETY_LIMIT = .8
 
 
-def publish_from_iterable_at_fixed_speed(iterable, publisher_func, times_per_second):
-	if times_per_second == 0:
+def publish_from_iterable_at_fixed_speed(
+	iterable,
+	publisher_func,
+	max_records_per_second,
+	publish_batch_size=1
+):
+	if max_records_per_second == 0:
 		raise ValueError("times_per_second must be greater than 0!")
 
 	finished = False
 	while not finished:
 		try:
 			start_time = time.time()
-			for i in range(0, times_per_second):
+			records_this_second = 0
+			while not finished and records_this_second < max_records_per_second:
 				# NOTE: If the aggregate data published exceeds 1MB / second there will
 				# be write throughput failures.
 				# As Of 9-20-16 the average record was ~ 180 Bytes
 				# 180 Bytes * 1000 = 180KB (which is well below the threshold)
-				publisher_func(next(iterable))
-			elapsed_time = time.time() - start_time
-			sleep_duration = 1 - elapsed_time
-			if sleep_duration > 0:
-				time.sleep(sleep_duration)
+				batch = next_record_batch_of_size(iterable, publish_batch_size)
+				if batch:
+					records_this_second += len(batch)
+					publisher_func(batch)
+				else:
+					finished = True
+
+			if not finished:
+				elapsed_time = time.time() - start_time
+				sleep_duration = 1 - elapsed_time
+				if sleep_duration > 0:
+					time.sleep(sleep_duration)
 		except StopIteration:
 			finished = True
+
+
+def next_record_batch_of_size(iterable, max_batch_size):
+	result = []
+	count = 0
+	record = next(iterable, None)
+	while record and count < max_batch_size:
+		result.append(record)
+		count += 1
+		record = next(iterable, None)
+	return result
 
 
 def fill_stream_from_iterable(stream_name, iterable, publisher_func):
@@ -47,7 +72,12 @@ def fill_stream_from_iterable(stream_name, iterable, publisher_func):
 		(stream_name, target_writes_per_sec)
 	)
 
-	publish_from_iterable_at_fixed_speed(iterable, publisher_func, target_writes_per_sec)
+	publish_from_iterable_at_fixed_speed(
+		iterable,
+		publisher_func,
+		target_writes_per_sec,
+		publish_batch_size=KINESIS_MAX_BATCH_WRITE_SIZE
+	)
 
 
 def resize_upload_processing_stream(num_shards=None):

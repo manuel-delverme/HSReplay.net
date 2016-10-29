@@ -202,6 +202,21 @@ class GlobalGamePlayer(models.Model):
 	def won(self):
 		return self.final_state in (PlayState.WINNING, PlayState.WON)
 
+	@property
+	def opponent(self):
+		try:
+			if self.player_id == 1:
+				return GlobalGamePlayer.objects.get(game=self.game_id, player_id=2)
+			else:
+				return GlobalGamePlayer.objects.get(game=self.game_id, player_id=1)
+		except:
+			# Some games where processing failed midway through do not have both players
+			return None
+
+	@property
+	def hero_class_name(self):
+		return self.hero.card_class.name
+
 
 class Visibility(IntEnum):
 	Public = 1
@@ -304,8 +319,13 @@ class GameReplay(models.Model):
 
 	replay_xml = models.FileField(upload_to=generate_upload_path)
 	hsreplay_version = models.CharField(
-		"HSReplay version",
-		max_length=8, help_text="The HSReplay spec version of the HSReplay XML file",
+		"HSReplay library version",
+		max_length=16, help_text="The HSReplay library version used to generate the replay",
+	)
+	hslog_version = models.CharField(
+		"hslog library version",
+		max_length=24, help_text="The python-hearthstone library version at processing",
+		null=True,  # TODO: Remove this once the table is clean of NULLs
 	)
 
 	# The fields below capture the preferences of the user who uploaded it.

@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# Install apt https support first
+dpkg -s apt-transport-https &>/dev/null || {
+	apt-get update -q
+	apt-get install -qy apt-transport-https
+}
+
 echo 'deb http://cloudfront.debian.net/debian jessie-backports main
 deb-src http://cloudfront.debian.net/debian jessie-backports main' > /etc/apt/sources.list.d/backports.list
 echo "deb https://repos.influxdata.com/debian jessie stable" > /etc/apt/sources.list.d/influxdb.list
@@ -8,7 +14,6 @@ wget https://repos.influxdata.com/influxdb.key -qO - | apt-key add -
 wget https://www.postgresql.org/media/keys/ACCC4CF8.asc -qO - | apt-key add -
 
 apt-get update -q
-apt-get install -qy apt-transport-https
 apt-get dist-upgrade -qy
 apt-get install -qy \
 	zsh curl git htop tree unzip vim \

@@ -138,7 +138,14 @@ export default class JoustEmbedder extends EventEmitter {
 		});
 
 		// autoplay
-		launcher.startPaused(false);
+		let autoplay = target.getAttribute("data-autoplay");
+		if (autoplay == "false") {
+			// Only disable autoplay if it's *specifically* set to "false"
+			launcher.startPaused(true);
+		}
+		else {
+			launcher.startPaused(false);
+		}
 
 		// initialize joust
 		let url = target.getAttribute("data-replayurl");

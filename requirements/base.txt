@@ -1,18 +1,18 @@
 # Core requirements for HSReplay.net
 
 hearthstone
-aniso8601==1.1.0
+aniso8601==1.2.0
 boto3==1.4.1
 Django==1.10.2
 django-storages==1.5.1
-djangorestframework==3.4.7
+djangorestframework==3.5.0
 requests==2.11.1
-hsreplay==1.3.8
+hsreplay==1.3.9
 influxdb==3.0.0
 lxml==3.6.4
 psycopg2==2.6.2
 python-dateutil==2.5.3
 pytz==2016.7
-raven==5.27.1
+raven==5.30.0
 shortuuid==0.4.3
 wheel==0.29.0

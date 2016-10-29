@@ -1,3 +1,4 @@
+from math import floor
 from django.utils.timezone import now
 from hearthstone.enums import GameTag, BlockType, BnetGameType
 from hearthstone.hslog.export import EntityTreeExporter
@@ -25,31 +26,56 @@ class InstrumentedExporter(EntityTreeExporter):
 
 		if not player.starting_hero:
 			return
-		controller_hero = player.starting_hero.card_id
-		game_type = BnetGameType(self._meta.get("game_type", 0)).name
+
+		game_type = self._meta.get("game_type", 0)
+		try:
+			game_type = BnetGameType(game_type).name
+		except Exception:
+			game_type = "UNKNOWN_%s" % (game_type)
 
 		payload = {
-			"measurement": "cards_played_stats",
+			"measurement": "played_card_stats",
 			"tags": {
 				"game_type": game_type,
-				"controller_hero": controller_hero,
-				"region": player.account_hi,
-				"controller_rank": player_meta.get("rank"),
+				"card_id": entity.card_id,
 			},
 			"fields": {
-				"card_id": entity.card_id,
-				"turn": self.game.tags.get(GameTag.TURN, 0),
+				"rank": self.to_rank_bucket(player_meta.get("rank")),
+				"mana": self.to_mana_crystals(player),
+				"hero": self.to_hero_class(player),
+				"region": player.account_hi,
 			},
 			"time": timestamp.isoformat()
 		}
 
 		self._payload.append(payload)
 
-	def write_payload(self, shortid):
-		# We include the upload shortid so that we can more accurately target
+	def to_hero_class(self, player):
+		if player.is_ai:
+			return "AI"
+		elif player.starting_hero.card_id.startswith("HERO_"):
+			return player.starting_hero.card_id[0:7]
+		else:
+			return "OTHER"
+
+	def to_rank_bucket(self, rank):
+		if not rank:
+			return None
+		elif rank == 0:
+			return "LEGEND"
+		else:
+			min = 1 + floor((rank - 1) / 5) * 5
+			max = min + 4
+			return "%s-%s" % (min, max)
+
+	def to_mana_crystals(self, player):
+		return player.tags.get(GameTag.RESOURCES, 0)
+
+	def write_payload(self, replay_xml_path):
+		# We include the replay_xml_path so that we can more accurately target
 		# map-reduce jobs to only process replays where the cards of interest
 		# were actually played.
 		# Populate the payload with it before writing to influx
 		for pl in self._payload:
-			pl["fields"]["shortid"] = shortid
+			pl["fields"]["replay_xml"] = replay_xml_path
 		influx_write_payload(self._payload)

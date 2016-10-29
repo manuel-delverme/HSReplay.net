@@ -44,6 +44,7 @@
 				<div id="joust-container" class="full_height"
 					data-replayurl="{{ replay.replay_xml.url }}"
 					{% if user.is_authenticated %}data-locale="{{ user.locale }}"{% endif %}
+					{% if user.joust_autoplay is False %}data-autoplay="false"{% endif %}
 				></div>
 			</div>
 		</div>

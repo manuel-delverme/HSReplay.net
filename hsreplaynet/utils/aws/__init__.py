@@ -11,10 +11,20 @@ def get_kinesis_stream_arn_from_name(name):
 
 
 def publish_raw_upload_to_processing_stream(raw_upload):
-	return KINESIS.put_record(
+	publish_raw_upload_batch_to_processing_stream([raw_upload])
+
+
+def publish_raw_upload_batch_to_processing_stream(raw_uploads):
+	records = []
+	for upload in raw_uploads:
+		records.append(dict(
+			Data=upload.kinesis_data,
+			PartitionKey=upload.kinesis_partition_key
+		))
+
+	return KINESIS.put_records(
+		Records=records,
 		StreamName=settings.KINESIS_UPLOAD_PROCESSING_STREAM_NAME,
-		Data=raw_upload.kinesis_data,
-		PartitionKey=raw_upload.kinesis_partition_key,
 	)
 
 

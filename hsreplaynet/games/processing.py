@@ -1,14 +1,16 @@
 import json
-import traceback
 from hashlib import sha1
 from io import StringIO
 from dateutil.parser import parse as dateutil_parse
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from hearthstone import __version__ as hslog_version
 from hearthstone.enums import CardType, GameTag
-from hearthstone.hslog.parser import LogParser
+from hearthstone.hslog.exceptions import ParsingError
 from hearthstone.hslog.export import EntityTreeExporter
+from hearthstone.hslog.parser import LogParser
+from hsreplay import __version__ as hsreplay_version
 from hsreplay.document import HSReplayDocument
 from hsreplaynet.cards.models import Card, Deck
 from hsreplaynet.utils import guess_ladder_season, log
@@ -22,10 +24,6 @@ from .models import (
 
 
 class ProcessingError(Exception):
-	pass
-
-
-class ParsingError(ProcessingError):
 	pass
 
 
@@ -161,7 +159,8 @@ def find_or_create_replay(parser, entity_tree, meta, upload_event, global_game, 
 		"upload_token": upload_event.token,
 		"won": friendly_player.won,
 		"replay_xml": replay_xml_path,
-		"hsreplay_version": hsreplay_doc.version,
+		"hsreplay_version": hsreplay_version,
+		"hslog_version": hslog_version,
 	}
 
 	# Create and save hsreplay.xml file
@@ -225,7 +224,7 @@ def handle_upload_event_exception(e):
 	If reraise is True, the exception will bubble up.
 	"""
 	if isinstance(e, ParsingError):
-		return UploadEventStatus.PARSING_ERROR, True
+		return UploadEventStatus.PARSING_ERROR, False
 	elif isinstance(e, (GameTooShort, EntityTreeExporter.EntityNotFound)):
 		return UploadEventStatus.UNSUPPORTED, False
 	elif isinstance(e, UnsupportedReplay):
@@ -250,8 +249,9 @@ def process_upload_event(upload_event):
 	try:
 		replay = do_process_upload_event(upload_event)
 	except Exception as e:
+		from traceback import format_exc
 		upload_event.error = str(e)
-		upload_event.traceback = traceback.format_exc()
+		upload_event.traceback = format_exc()
 		upload_event.status, reraise = handle_upload_event_exception(e)
 		upload_event.save()
 		if reraise:
@@ -263,32 +263,7 @@ def process_upload_event(upload_event):
 		upload_event.status = UploadEventStatus.SUCCESS
 		upload_event.save()
 
-		if not upload_event.test_data:
-			capture_class_distribution_stats(replay)
-
 	return replay
-
-
-def capture_class_distribution_stats(replay):
-	fields = {
-		"num_turns": replay.global_game.num_turns,
-		"opposing_player_deck_digest": replay.opposing_player.deck_list.digest,
-		"friendly_player_deck_digest": replay.friendly_player.deck_list.digest,
-	}
-
-	tags = {
-		"game_type": replay.global_game.game_type,
-		"scenario_id": replay.global_game.scenario_id,
-		"region": replay.friendly_player.account_hi,
-		"opposing_player_rank": replay.opposing_player.rank,
-		"opposing_player_class": replay.opposing_player.hero.card_class.name,
-		"opposing_player_final_state": replay.opposing_player.final_state,
-		"friendly_player_rank": replay.friendly_player.rank,
-		"friendly_player_class": replay.friendly_player.hero.card_class.name,
-		"friendly_player_final_state": replay.friendly_player.final_state,
-	}
-
-	influx_metric("replay_outcome_stats", fields=fields, **tags)
 
 
 def parse_upload_event(upload_event, meta):
@@ -305,14 +280,10 @@ def parse_upload_event(upload_event, meta):
 	powerlog = StringIO(log_bytes.decode("utf-8"))
 	upload_event.file.close()
 
-	try:
-		parser = LogParser()
-		parser._game_state_processor = "GameState"
-		parser._current_date = match_start
-		parser.read(powerlog)
-	except Exception as e:
-		log.exception("Got exception %r while parsing log", e)
-		raise ParsingError(str(e))  # from e
+	parser = LogParser()
+	parser._game_state_processor = "GameState"
+	parser._current_date = match_start
+	parser.read(powerlog)
 
 	return parser
 
@@ -382,8 +353,14 @@ def update_global_players(global_game, entity_tree, meta):
 			decklist = [c.card_id for c in player.initial_deck if c.card_id]
 
 		name, real_name = get_player_names(player)
+		player_hero_id = player._hero.card_id
 
-		deck, created = Deck.objects.get_or_create_from_id_list(decklist)
+		deck, created = Deck.objects.get_or_create_from_id_list(
+			decklist,
+			hero_id=player_hero_id,
+			game_type=global_game.game_type,
+			classify_into_archetype=True
+		)
 		log.debug("Prepared deck %i (created=%r)", deck.id, created)
 
 		common = {
@@ -395,7 +372,7 @@ def update_global_players(global_game, entity_tree, meta):
 			"account_lo": player.account_lo,
 			"is_first": player.tags.get(GameTag.FIRST_PLAYER, False),
 			"is_ai": player.is_ai,
-			"hero_id": player._hero.card_id,
+			"hero_id": player_hero_id,
 			"hero_premium": player._hero.tags.get(GameTag.PREMIUM, False),
 			"final_state": player.tags.get(GameTag.PLAYSTATE, 0),
 			"deck_list": deck,
@@ -460,6 +437,6 @@ def do_process_upload_event(upload_event):
 	)
 
 	if not upload_event.test_data:
-		exporter.write_payload(replay.shortid)
+		exporter.write_payload(replay.replay_xml.name)
 
 	return replay

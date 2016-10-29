@@ -62,6 +62,10 @@ export default class GameHistoryItem extends React.Component<GameHistoryItemProp
 			case BnetGameType.BGT_TAVERNBRAWL_2P_COOP:
 			case BnetGameType.BGT_TAVERNBRAWL_PVP:
 				return <img src={STATIC_URL + "images/modeID_Brawl.png"} className="hsreplay-type" alt="Tavern Brawl"/>;
+			case BnetGameType.BGT_CASUAL_STANDARD:
+				return <img src={STATIC_URL + "images/casual.png"} className="hsreplay-type" alt="Casual"/>;
+			case BnetGameType.BGT_CASUAL_WILD:
+				return <img src={STATIC_URL + "images/casual-wild.png"} className="hsreplay-type" alt="Casual (Wild)"/>;
 			default:
 				return null;
 		}
