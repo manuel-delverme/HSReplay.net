@@ -1,83 +1,32 @@
 import collections
-import json
-import pickle
 from django.utils import timezone
+# import gensim
 
 import itertools
 
-import datetime
 from scipy.spatial import distance
 import random
 import sys
 import csv
 
-import nltk
 import numpy as np
-import multiprocessing
 import sklearn
 
 from hearthstone import cardxml
-from nltk import FreqDist
 from sklearn.cluster import DBSCAN
 from sklearn.decomposition import PCA
+
 from sklearn.manifold import TSNE
 from sklearn.neighbors import NearestNeighbors
 
 
-class DeckClassifierAPI(object):  # Resource):
-	@classmethod
-	def make_api(cls, classifier):
-		cls.classifier = classifier
-		return cls
-
-	@staticmethod
-	def get_placeholder_deck():
-		x = np.array([0] * 669)
-		for i in range(30):
-			x[random.randint(0, len(x))] += 1
-		return x.reshape(1, -1)
-
-	def post(self):
-		deck = json.loads(request.form['deck'])
-		klass = request.form['klass']
-
-		lookup = self.classifier.dimension_to_card_name
-		x = self.classifier.deck_to_vector([deck], lookup[klass])
-
-		index = int(self.classifier.dbscan_predict(x, klass))
-		name = self.classifier.cluster_names[klass][index]
-		# races = self.classifier.cluster_races[klass][index]
-		# categories = self.classifier.cluster_categories[klass][index]
-		canonical_deck = self.classifier.canonical_decks[klass][index]
-
-		return (name, canonical_deck), 201
-
-
-def print_data(deck_names, clusters):
-	sets = collections.defaultdict(list)
-	for (i, name) in enumerate(deck_names):
-		sets[clusters[i]].append(name)
-	groups = []
-	for cluster_number in sets:
-		groups.append(sets[cluster_number])
-
-	for group in sorted(groups, key=len):
-		print(len(group), group, "\n")
-	print("found {} clusters".format(len(set(clusters))))
-
-
 class DeckClassifier(object):
 	CLASSIFIER_CACHE = "klass_classifiers.pkl"
-	MAX_DIMENSIONS = 30
+	PCA_DIMENSIONS = 30
 
-	def __init__(self, config=None):
-		self.created = timezone.now()
-		# self.app = Flask(__name__)
-		# app_api = Api(self.app)
-		# classifier_api = DeckClassifierAPI.make_api(self)
-		# app_api.add_resource(classifier_api, "/")  # "/api/v0.1/detect_archetype")
+	def __init__(self, config=None, eps=1, min_samples=1):
+		# self.created = timezone.now() #TODO readd me
 
-		self.classifier_state = None
 		self.test_labels = []
 		self.card_db, _ = cardxml.load()
 		self.cluster_names = {}
@@ -86,26 +35,68 @@ class DeckClassifier(object):
 		self.dimension_to_card_name = {}
 		self.canonical_decks = {}
 
-		REDIS_ADDR = "localhost"
-		REDIS_PORT = 6379
-		REDIS_DB = 0
 		if config:
 			eps = config['eps_modifier']
 			min_samples = config['eps_modifier']
-			DATA_FILE = config['data_file']
-		else:
-			eps = float(sys.argv[1])
-			min_samples = float(sys.argv[2])
-			DATA_FILE = "data/decks.csv"  # "all_decks.pkl"
-		self.redis_db = None  # redis.StrictRedis(host=REDIS_ADDR, port=REDIS_PORT, db=REDIS_DB)
-		self.maybe_train_classifier(DATA_FILE, eps, min_samples)
 
-	def run(self):
-		pass
-		# self.app.run(host="0.0.0.0", port=31337)
+		self.classifier_state = {
+			'eps_mod'        : eps,
+			'min_samples_mod': min_samples,
+		}
+
+	# sk-learn API
+	def fit(self, data_file):  # TODO this has to be an iter
+		eps_mod = self.classifier_state['eps_mod']
+		samples_mod = self.classifier_state['min_samples_mod']
+		loaded_data, loaded_deck_names = self.load_data_from_file(data_file)
+		# data, deck_names, test_data, test_labels = self.split_dataset(loaded_data, loaded_deck_names)
+		data = loaded_data
+		del loaded_data
+		del loaded_deck_names
+		# dumb_results = self.dumb_train(data, step, samples_mod)
+
+		# self.classifier_state = {}
+		classifier = {}
+		transform = {}
+		labels = {}
+		for klass in data.keys():
+			classifier[klass], transform[klass], labels[klass], _ = self.train_classifier(data[klass], eps_mod, samples_mod, klass)
+			# cluster_names, _, _ = self.name_clusters(deck_names[klass], klass, labels)
+
+		self.classifier_state = {
+			'classifier': classifier,
+			'transform' : transform,
+			'labels'    : labels,
+			# 'cluster_names': cluster_names,
+		}
+
+		# print("train results:")
+		self.eval_train_results(data, labels)
+		# print("test results:")
+		# self.eval_test_results(test_data, test_labels)
+
+		# with open(self.CLASSIFIER_CACHE, 'wb') as d:
+		#	state_tuple = (self.klass_classifiers, self.dimension_to_card_name, self.pca, self.cluster_names, self.canonical_decks)
+		#	pickle.dump(state_tuple, d)
+
+
+	def predict(self, deck, klass):
+		lookup = self.dimension_to_card_name
+		x = self.deck_to_vector([deck], lookup[klass])
+
+		index = int(self.dbscan_predict(x, klass))
+		name = self.cluster_names[klass][index]
+		# races = self.classifier.cluster_races[klass][index]
+		# categories = self.classifier.cluster_categories[klass][index]
+		canonical_deck = self.canonical_decks[klass][index]
+
+		return (name, canonical_deck)
+
+	def score(self, data):
+		return self.test_accuracy(data)
 
 	@staticmethod
-	def load_decks_from_file(file_name):
+	def _load_decks_from_file(file_name):
 		decks = collections.defaultdict(list)
 		deck_names = {}
 		with open(file_name, 'r') as f:
@@ -120,11 +111,18 @@ class DeckClassifier(object):
 
 				if hsreplay_format:
 					klass, deck = entry[1], entry[3]
+					if klass[-1].islower():
+						klass = klass[:-1]
+						deck = deck.split(", ")
 				else:
-					klass, deck = entry.strip().split(":")
+					if isinstance(entry, list):
+						klass, entry[0] = entry[0].split(":")
+						deck = entry
+					else:
+						klass, deck = entry.strip().split(":")
+						deck = deck.split(", ")
 				if deck == "None":
 					continue
-				deck = deck.split(", ")
 				decks_in_file += 1
 				if len(deck) != 30:
 					dropped += 1
@@ -148,12 +146,12 @@ class DeckClassifier(object):
 				else:
 					# print("predicted [", label, "] was [", target_label, end=' ]\t')
 					for cluster_index, prob in zip(self.klass_classifiers[klass].classes_,
-												   self.dbscan_explain(deck, klass)[0]):
+					                               self.dbscan_explain(deck, klass)[0]):
 						prob = int(prob * 100)
 						if prob != 0:
 							pass
-							# print(self.cluster_names[klass][cluster_index], prob, "%", end="; ")
-							# print("")
+						# print(self.cluster_names[klass][cluster_index], prob, "%", end="; ")
+						# print("")
 		# print("predicted UNKNOWN", unknowns, "times")
 		if test_data:
 			return float(hits) / len(test_data)
@@ -181,7 +179,7 @@ class DeckClassifier(object):
 		return data
 
 	def load_data_from_file(self, file_name):
-		decks, deck_names = self.load_decks_from_file(file_name)
+		decks, deck_names = self._load_decks_from_file(file_name)
 
 		data = {}
 		# TODO: use vectorizer
@@ -192,43 +190,18 @@ class DeckClassifier(object):
 		return data, deck_names
 
 	def train_classifier(self, data, eps_mod, min_samples_mod, klass):
-		if data.shape[1] > self.MAX_DIMENSIONS:
-			transform = PCA(n_components=self.MAX_DIMENSIONS)
-			data = transform.fit_transform(data)
-		else:
-			transform = None
+		print("training:", klass)
+		eps, min_samples = self.fit_clustering_parameters(data)
 
-		# get some statistics
-		min_datapoints = 100
-		SIZE = int(len(data) / 25)# consider only a subset of the dataset
-		if SIZE < min_datapoints:
-			SIZE = min(min_datapoints, len(data))
-
-		pairs = list(itertools.product(range(SIZE), repeat=2))
-		avg = 0
-		max_dist = 0
-		min_dist = 99999
-
-		# dsts = np.zeros((data.shape[0], data.shape[0]))
-		dsts = np.zeros((SIZE, SIZE))
-		for i, j in pairs:
-			dist = distance.cityblock(data[i], data[j])
-			dsts[i][j] = dist
-			max_dist = max(dist, max_dist)
-			if dist > 0.001:
-				min_dist = min(dist, min_dist)
-				avg += dist / len(pairs)
-		# plt.matshow(dsts)
-		# for i, j in pairs:
-		#	 plt.annotate(int(dsts[i][j]), xy=(i, j))
-		print("klass", klass, "distances: avg:", avg, "max:", max_dist, "min", min_dist)
-		# plt.show()
-		eps = min_dist + (avg - min_dist) / 10
 		eps *= eps_mod
 		print("eps:", eps)
-		min_samples = int(len(data) / 50)
+
 		min_samples = int(min_samples_mod * min_samples)
 		print("min_samples:", min_samples)
+
+		transform = PCA(n_components=self.PCA_DIMENSIONS)
+		data = transform.fit_transform(data)
+
 		labels, db = self.label_data(data, min_samples, eps)
 
 		noise_mask = labels == -1
@@ -289,34 +262,6 @@ class DeckClassifier(object):
 	def load_classifier_state(self, state):
 		self.classifier_state = state
 
-	def maybe_train_classifier(self, data_file, eps_mod, samples_mod):
-			loaded_data, loaded_deck_names = self.load_data_from_file(data_file)
-			data, deck_names, test_data, test_labels = self.split_dataset(loaded_data, loaded_deck_names)
-			del loaded_data
-			del loaded_deck_names
-			labels = {}
-			# dumb_results = self.dumb_train(data, step, samples_mod)
-
-			self.classifier_state = {}
-			for klass in data.keys():
-				classifier, transform, labels, _ = self.train_classifier(data[klass], eps_mod, samples_mod, klass)
-				# cluster_names, _, _ = self.name_clusters(deck_names[klass], klass, labels)
-
-				self.classifier_state[klass] = {
-					'classifier': classifier,
-					'transform': transform,
-					'labels': labels,
-					#'cluster_names': cluster_names,
-				}
-
-			# print("train results:")
-			# self.eval_train_results(data, labels, deck_names)
-			# print("test results:")
-			# self.eval_test_results(test_data, test_labels)
-
-			# with open(self.CLASSIFIER_CACHE, 'wb') as d:
-			#	state_tuple = (self.klass_classifiers, self.dimension_to_card_name, self.pca, self.cluster_names, self.canonical_decks)
-			#	pickle.dump(state_tuple, d)
 
 	# consider the newest decks more important
 	def dbscan_predict(self, x_new, klass):
@@ -380,16 +325,16 @@ class DeckClassifier(object):
 		return cluster_names, cluster_races, cluster_categories
 
 	@staticmethod
-	def split_dataset(loaded_data, loaded_deck_names):
+	def split_dataset(loaded_data, loaded_deck_names):  # TODO: clear names stuff
 		known_archetypes = {
 			'Warrior': {"patron", "control", "pirate", "dragon", "warrior"},
 			'Paladin': {"aggro murloc", "aggro", "control", "dragon"},
-			'Shaman': {"aggro", "midrange"},
-			'Druid': {"beast", "control", "aggro", "ramp"},
-			'Priest': {"control", "dragon"},
-			'Mage': {"freeze", "reno", "tempo"},
-			'Hunter': {"midrange"},
-			'Rogue': {"miracle", "old", "mill"},
+			'Shaman' : {"aggro", "midrange"},
+			'Druid'  : {"beast", "control", "aggro", "ramp"},
+			'Priest' : {"control", "dragon"},
+			'Mage'   : {"freeze", "reno", "tempo"},
+			'Hunter' : {"midrange"},
+			'Rogue'  : {"miracle", "old", "mill"},
 			'Warlock': {"reno", "zoo"},
 		}
 		test_dataset = {}
@@ -409,7 +354,7 @@ class DeckClassifier(object):
 				train_data[klass] = loaded_data[klass][test_data_size:]
 			else:
 				normalized_names = [name.lower().replace(klass.lower(), "").strip() for name in
-									loaded_deck_names[klass]]
+				                    loaded_deck_names[klass]]
 
 				possibilities = []
 				for index, name in enumerate(normalized_names):
@@ -445,7 +390,7 @@ class DeckClassifier(object):
 
 	def get_canonical_decks(self, data, transform, labels, lookup):
 		transformed_data = False
-		if data.shape[1] > self.MAX_DIMENSIONS:
+		if data.shape[1] > self.PCA_DIMENSIONS:
 			data = transform.transform(data)
 			transformed_data = True
 		canonical_decks = {}
@@ -502,68 +447,69 @@ class DeckClassifier(object):
 
 			xy = embed[class_member_mask & core_samples_mask]
 			plt.plot(xy[:, 0], xy[:, 1], 'o', markerfacecolor=col,
-					 markeredgecolor='k', markersize=12, alpha=0.9, zorder=1)
+			         markeredgecolor='k', markersize=12, alpha=0.9, zorder=1)
 			for x, y in xy:
 				plt.annotate(str(k), xy=(x, y), fontsize=8)
 			xy = X[class_member_mask & ~core_samples_mask]
 			plt.plot(xy[:, 0], xy[:, 1], 'x', markerfacecolor=col,
-					 markeredgecolor='k', markersize=16, alpha=0.4, zorder=2)
+			         markeredgecolor='k', markersize=16, alpha=0.4, zorder=2)
 
 		plt.title('Estimated number of clusters: %d' % n_clusters_)
 		plt.show()
 
-	def eval_train_results(self, data, labels, deck_names):
-		num_cluster_names = 0
-		for klass, names in self.cluster_names.items():
-			num_cluster_names += len(names)
+	def eval_train_results(self, data, labels, deck_names=None):
+		# num_cluster_names = 0
+		# for klass, names in self.cluster_names.items():
+		# 	num_cluster_names += len(names)
+		# TODO: print table with: inter cluster distance and cluster width/variance
 		mean_unknown_ratio = 0
-		if num_cluster_names != 0:
-			for klass, cluster_names in self.cluster_names.items():
-				print(klass, "clusters", len(cluster_names), end='{')
-				for cluster_index, cluster_name in cluster_names.items():
-					decks = self.get_decks_names_in_cluster(labels[klass], cluster_index, deck_names[klass])
-					if cluster_name == "UNKNOWN":
-						# print(int((float(len(decks)) / len(data[klass])) * 100), end=" ")
-						print("}")
-						unknown_ratio = (float(len(decks)) / len(data[klass])) * 100
-						mean_unknown_ratio += unknown_ratio / len(self.cluster_names)
-						print("\t{}[{}, {:.0f}%]".format(cluster_name, len(decks), unknown_ratio))
+		# if num_cluster_names != 0:
+		#	for klass, cluster_names in self.cluster_names.items():
+		#		print(klass, "clusters", len(cluster_names), end='{')
+		#		for cluster_index, cluster_name in cluster_names.items():
+		#			decks = self.get_decks_names_in_cluster(labels[klass], cluster_index, deck_names[klass])
+		#			if cluster_name == "UNKNOWN":
+		#				# print(int((float(len(decks)) / len(data[klass])) * 100), end=" ")
+		#				print("}")
+		#				unknown_ratio = (float(len(decks)) / len(data[klass])) * 100
+		#				mean_unknown_ratio += unknown_ratio / len(self.cluster_names)
+		#				print("\t{}[{}, {:.0f}%]".format(cluster_name, len(decks), unknown_ratio))
+		#			else:
+		#				print(cluster_name, len(decks), end=", ")
+		#		self.canonical_decks[klass] = self.get_canonical_decks(data[klass], self.pca[klass],
+		#		                                                       labels[klass],
+		#		                                                       self.dimension_to_card_name[klass])
+		#else:
+		for klass, cluster_indexes in labels.items():
+			cluster_set = list(reversed(sorted(set(cluster_indexes))))
+			print(klass, "num clusters:", len(cluster_set), "{")
+			transform = self.classifier_state['transform'][klass]
+			canonical_deck = self.get_canonical_decks(data[klass], transform , labels[klass], self.dimension_to_card_name[klass])
+			self.canonical_decks[klass] = canonical_deck
+			for cluster_index in cluster_set:
+				decks = self.get_decks_in_cluster(cluster_indexes, cluster_index)
+				print(cluster_index, ":", len(decks), "decks in this cluster")
+				printed_cards = 0
+				while canonical_deck[cluster_index] and printed_cards < 12:
+					card = canonical_deck[cluster_index].pop(0)
+					print("\t", card, end=" ")
+					printed_cards += 1
+					if canonical_deck[cluster_index] and card == canonical_deck[cluster_index][0]:
+						canonical_deck[cluster_index].pop(0)
+						print("x2", end="")
+					if (printed_cards % 2) == 0:
+						print("\t")
 					else:
-						print(cluster_name, len(decks), end=", ")
-				self.canonical_decks[klass] = self.get_canonical_decks(data[klass], self.pca[klass],
-																	   labels[klass],
-																	   self.dimension_to_card_name[klass])
-		else:
-			for klass, cluster_indexes in labels.items():
-				cluster_set = list(reversed(sorted(set(cluster_indexes))))
-				print(klass, "num clusters:", len(cluster_set), "{")
-				canonical_deck = self.get_canonical_decks(data[klass], self.pca[klass], labels[klass],
-														  self.dimension_to_card_name[klass])
-				self.canonical_decks[klass] = canonical_deck
-				for cluster_index in cluster_set:
-					decks = self.get_decks_in_cluster(cluster_indexes, cluster_index)
-					print(cluster_index, ":", len(decks), "decks in this cluster")
-					printed_cards = 0
-					while canonical_deck[cluster_index] and printed_cards < 12:
-						card = canonical_deck[cluster_index].pop(0)
-						print("\t", card, end=" ")
-						printed_cards += 1
-						if canonical_deck[cluster_index] and card == canonical_deck[cluster_index][0]:
-							canonical_deck[cluster_index].pop(0)
-							print("x2", end="")
-						if (printed_cards % 2) == 0:
-							print("\t")
-						else:
-							print(" ", end="")
-					if (printed_cards % 2) == 1:
-						print("")
-					if cluster_index == -1:
-						# print(int((float(len(decks)) / len(data[klass])) * 100), end=" ")
-						print("}")
-						unknown_ratio = (float(len(decks)) / len(data[klass])) * 100
-						mean_unknown_ratio += unknown_ratio / len(data)
-						print("\t{}[{}, {:.0f}%]".format("unknown", len(decks), unknown_ratio))
-						print("-" * 30)
+						print(" ", end="")
+				if (printed_cards % 2) == 1:
+					print("")
+				if cluster_index == -1:
+					# print(int((float(len(decks)) / len(data[klass])) * 100), end=" ")
+					print("}")
+					unknown_ratio = (float(len(decks)) / len(data[klass])) * 100
+					mean_unknown_ratio += unknown_ratio / len(data)
+					print("\t{}[{}, {:.0f}%]".format("unknown", len(decks), unknown_ratio))
+					print("-" * 30)
 
 				# self.plot_clusters(cluster_indexes, db[klass], data[klass], self.pca[klass])
 		print("mean unknown ratio {:.2f}%".format(mean_unknown_ratio))
@@ -689,10 +635,65 @@ class DeckClassifier(object):
 			print(k, v)
 		return roots
 
+	@staticmethod
+	def get_placeholder_deck():
+		x = np.array([0] * 669)
+		for i in range(30):
+			x[random.randint(0, len(x))] += 1
+		return x.reshape(1, -1)
+
+	def fit_clustering_parameters(self, data):
+		# get some statistics on a subset of the data
+		# being just an heuristics we don't need to consider the whole training set
+
+		MIN_DATAPOINTS = 100
+		SIZE = int(min(MIN_DATAPOINTS, len(data)/25))  # take only 1/25th of the data, min 100
+
+		pairs = list(itertools.product(range(SIZE), repeat=2))
+		avg = 0
+		max_dist = 0
+		min_dist = 99999
+
+		pairwise_distance = np.zeros((SIZE, SIZE))
+		for i, j in pairs:
+			# TODO: assuming data indipendence
+			if i >= j:
+				continue
+			else:
+				dist = distance.hamming(data[i], data[j])
+				pairwise_distance[i][j] = dist
+				max_dist = max(dist, max_dist)
+				if dist > 0.001:
+					min_dist = min(dist, min_dist)
+					avg += dist / len(pairs)
+		print("distances: avg:", avg*len(data[i]), "max:", max_dist*len(data[i]), "min", min_dist*len(data[i]))
+		eps = min_dist + (avg - min_dist) / 10  # TODO: coefficent
+		# consider meaningful decks only if they appear atleast 2% of the time
+		min_samples = int(len(data) / 50)
+		return eps, min_samples
+
+
+def print_data(deck_names, clusters):
+	sets = collections.defaultdict(list)
+	for (i, name) in enumerate(deck_names):
+		sets[clusters[i]].append(name)
+	groups = []
+	for cluster_number in sets:
+		groups.append(sets[cluster_number])
+
+	for group in sorted(groups, key=len):
+		print(len(group), group, "\n")
+	print("found {} clusters".format(len(set(clusters))))
+
 
 if __name__ == '__main__':
-	import matplotlib.pyplot as plt
-	from flask import Flask
-	from flask_restful import Resource, Api
-	from flask import request
-	DeckClassifier().run()
+	dataset_path = sys.argv[1]
+	results_path = sys.argv[2]
+	map_path = sys.argv[3]
+	classifier = DeckClassifier()
+	classifier.fit("train_decks.csv")  # TODO reload from state
+	decks, _ = classifier._load_decks_from_file(dataset_path)
+	for klass, klass_decks in decks.items():
+		results = classifier.predict(klass_decks, klass)
+		print(results)
+	print("write to:", results_path, map_path)

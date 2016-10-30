@@ -55,6 +55,7 @@ class ClassifierManager(models.Manager):
 		result = Classifier()
 		from scripts.detect_archetype import DeckClassifier
 		classifier = DeckClassifier(settings.CLASSIFIER_CONFIG)
+		# classifier.fit()
 
 		# Make sure at the end of training the resulting state is picked and saved to the
 		# Classifier.classifier_cache field, e.g.
