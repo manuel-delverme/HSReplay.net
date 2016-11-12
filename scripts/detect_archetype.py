@@ -60,24 +60,23 @@ class DeckClassifier(object):
 		transform = {}
 		labels = {}
 		for klass in data.keys():
-			classifier[klass], transform[klass], labels[klass], _ = self.train_classifier(data[klass], eps_mod, samples_mod, klass)
-			# cluster_names, _, _ = self.name_clusters(deck_names[klass], klass, labels)
+			classifier[klass], transform[klass], labels[klass], _ = self.train_classifier(data[klass], eps_mod,
+			                                                                              samples_mod, klass)
+		# cluster_names, _, _ = self.name_clusters(deck_names[klass], klass, labels)
 
-		self.classifier_state = {
-			'classifier': classifier,
-			'transform' : transform,
-			'labels'    : labels,
-			# 'cluster_names': cluster_names,
-		}
+		self.classifier_state['classifier'] = classifier
+		self.classifier_state['transform'] = transform
+		self.classifier_state['labels'] = labels
 
 		# print("train results:")
 		self.eval_train_results(data, labels)
-		# print("test results:")
-		# self.eval_test_results(test_data, test_labels)
 
-		# with open(self.CLASSIFIER_CACHE, 'wb') as d:
-		#	state_tuple = (self.klass_classifiers, self.dimension_to_card_name, self.pca, self.cluster_names, self.canonical_decks)
-		#	pickle.dump(state_tuple, d)
+	# print("test results:")
+	# self.eval_test_results(test_data, test_labels)
+
+	# with open(self.CLASSIFIER_CACHE, 'wb') as d:
+	#	state_tuple = (self.klass_classifiers, self.dimension_to_card_name, self.pca, self.cluster_names, self.canonical_decks)
+	#	pickle.dump(state_tuple, d)
 
 
 	def predict(self, deck, klass):
@@ -85,12 +84,11 @@ class DeckClassifier(object):
 		x = self.deck_to_vector([deck], lookup[klass])
 
 		index = int(self.dbscan_predict(x, klass))
-		name = self.cluster_names[klass][index]
+		# name = self.classifier_state['cluster_names'][klass][index]
 		# races = self.classifier.cluster_races[klass][index]
 		# categories = self.classifier.cluster_categories[klass][index]
 		canonical_deck = self.canonical_decks[klass][index]
-
-		return (name, canonical_deck)
+		return canonical_deck
 
 	def score(self, data):
 		return self.test_accuracy(data)
@@ -262,12 +260,11 @@ class DeckClassifier(object):
 	def load_classifier_state(self, state):
 		self.classifier_state = state
 
-
 	# consider the newest decks more important
 	def dbscan_predict(self, x_new, klass):
 		x_new = x_new.reshape(1, -1)
-		x_new = self.pca[klass].transform(x_new)
-		prediction = self.klass_classifiers[klass].predict(x_new)
+		x_new = self.classifier_state['transform'][klass].transform(x_new)
+		prediction = self.classifier_state['classifier'][klass].predict(x_new)
 		return prediction
 
 	def dbscan_explain(self, x_new, klass):
@@ -479,12 +476,13 @@ class DeckClassifier(object):
 		#		self.canonical_decks[klass] = self.get_canonical_decks(data[klass], self.pca[klass],
 		#		                                                       labels[klass],
 		#		                                                       self.dimension_to_card_name[klass])
-		#else:
+		# else:
 		for klass, cluster_indexes in labels.items():
 			cluster_set = list(reversed(sorted(set(cluster_indexes))))
 			print(klass, "num clusters:", len(cluster_set), "{")
 			transform = self.classifier_state['transform'][klass]
-			canonical_deck = self.get_canonical_decks(data[klass], transform , labels[klass], self.dimension_to_card_name[klass])
+			canonical_deck = self.get_canonical_decks(data[klass], transform, labels[klass],
+			                                          self.dimension_to_card_name[klass])
 			self.canonical_decks[klass] = canonical_deck
 			for cluster_index in cluster_set:
 				decks = self.get_decks_in_cluster(cluster_indexes, cluster_index)
@@ -647,7 +645,7 @@ class DeckClassifier(object):
 		# being just an heuristics we don't need to consider the whole training set
 
 		MIN_DATAPOINTS = 100
-		SIZE = int(min(MIN_DATAPOINTS, len(data)/25))  # take only 1/25th of the data, min 100
+		SIZE = int(min(MIN_DATAPOINTS, len(data) / 25))  # take only 1/25th of the data, min 100
 
 		pairs = list(itertools.product(range(SIZE), repeat=2))
 		avg = 0
@@ -666,7 +664,7 @@ class DeckClassifier(object):
 				if dist > 0.001:
 					min_dist = min(dist, min_dist)
 					avg += dist / len(pairs)
-		print("distances: avg:", avg*len(data[i]), "max:", max_dist*len(data[i]), "min", min_dist*len(data[i]))
+		print("distances: avg:", avg * len(data[i]), "max:", max_dist * len(data[i]), "min", min_dist * len(data[i]))
 		eps = min_dist + (avg - min_dist) / 10  # TODO: coefficent
 		# consider meaningful decks only if they appear atleast 2% of the time
 		min_samples = int(len(data) / 50)
@@ -694,6 +692,13 @@ if __name__ == '__main__':
 	classifier.fit("train_decks.csv")  # TODO reload from state
 	decks, _ = classifier._load_decks_from_file(dataset_path)
 	for klass, klass_decks in decks.items():
+		klass = int(''.join(filter(str.isdigit, klass)))
+		hero_to_class = ['',
+	                 'WARRIOR', 'SHAMAN', 'ROGUE',
+	                 'PALADIN', 'HUNTER', 'DRUID',
+	                 'WARLOCK', 'MAGE', 'PRIEST',
+	                 ]
+		klass = hero_to_class[klass]
 		results = classifier.predict(klass_decks, klass)
 		print(results)
 	print("write to:", results_path, map_path)
