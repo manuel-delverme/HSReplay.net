@@ -1,7 +1,4 @@
 import collections
-from django.utils import timezone
-# import gensim
-
 import itertools
 
 from scipy.spatial import distance
@@ -45,23 +42,17 @@ class DeckClassifier(object):
 		}
 
 	# sk-learn API
-	def fit(self, data_file):  # TODO this has to be an iter
+	def fit(self, data):  # TODO this has to be an iter
 		eps_mod = self.classifier_state['eps_mod']
 		samples_mod = self.classifier_state['min_samples_mod']
-		loaded_data, loaded_deck_names = self.load_data_from_file(data_file)
-		# data, deck_names, test_data, test_labels = self.split_dataset(loaded_data, loaded_deck_names)
-		data = loaded_data
-		del loaded_data
-		del loaded_deck_names
 		# dumb_results = self.dumb_train(data, step, samples_mod)
 
-		# self.classifier_state = {}
 		classifier = {}
 		transform = {}
 		labels = {}
 		for klass in data.keys():
-			classifier[klass], transform[klass], labels[klass], _ = self.train_classifier(data[klass], eps_mod,
-			                                                                              samples_mod, klass)
+			classifier[klass], transform[klass], labels[klass], _ = \
+				self.train_classifier(data[klass], eps_mod, samples_mod, klass)
 		# cluster_names, _, _ = self.name_clusters(deck_names[klass], klass, labels)
 
 		self.classifier_state['classifier'] = classifier
@@ -82,13 +73,16 @@ class DeckClassifier(object):
 	def predict(self, deck, klass):
 		lookup = self.dimension_to_card_name
 		x = self.deck_to_vector([deck], lookup[klass])
+		x = x.reshape(1, -1)
+		x = self.classifier_state['transform'][klass].transform(x)
 
-		index = int(self.dbscan_predict(x, klass))
+		index, confidence = self.dbscan_predict(x, klass)
+		index = int(index)
 		# name = self.classifier_state['cluster_names'][klass][index]
 		# races = self.classifier.cluster_races[klass][index]
 		# categories = self.classifier.cluster_categories[klass][index]
 		canonical_deck = self.canonical_decks[klass][index]
-		return canonical_deck
+		return canonical_deck, confidence
 
 	def score(self, data):
 		return self.test_accuracy(data)
@@ -188,6 +182,36 @@ class DeckClassifier(object):
 		return data, deck_names
 
 	def train_classifier(self, data, eps_mod, min_samples_mod, klass):
+
+		class Transformer:
+			def __init__(self, output_dimensions):
+				self.PCA_DIMENSIONS = output_dimensions
+
+			def preprocess(self, data):
+				self.scaler = sklearn.preprocessing.StandardScaler()
+				data = self.scaler.fit_transform(data)
+				return data
+
+			def dimensionality_reduction(self, data):
+				self.pca = PCA(n_components=self.PCA_DIMENSIONS)
+				data = self.pca.fit_transform(data)
+				return data
+
+			def transform(self, data):
+				data = self.scaler.transform(data)
+				data = self.pca.transform(data)
+				return data
+
+			def inverse_transform(self, data):
+				data = self.pca.inverse_transform(data)
+				data = self.scaler.inverse_transform(data)
+				return data
+
+		transform = Transformer(output_dimensions=self.PCA_DIMENSIONS)
+
+		data = transform.preprocess(data)
+		data = transform.dimensionality_reduction(data)
+
 		print("training:", klass)
 		eps, min_samples = self.fit_clustering_parameters(data)
 
@@ -196,9 +220,6 @@ class DeckClassifier(object):
 
 		min_samples = int(min_samples_mod * min_samples)
 		print("min_samples:", min_samples)
-
-		transform = PCA(n_components=self.PCA_DIMENSIONS)
-		data = transform.fit_transform(data)
 
 		labels, db = self.label_data(data, min_samples, eps)
 
@@ -262,10 +283,10 @@ class DeckClassifier(object):
 
 	# consider the newest decks more important
 	def dbscan_predict(self, x_new, klass):
-		x_new = x_new.reshape(1, -1)
-		x_new = self.classifier_state['transform'][klass].transform(x_new)
-		prediction = self.classifier_state['classifier'][klass].predict(x_new)
-		return prediction
+		prediction = self.classifier_state['classifier'][klass].predict_proba(x_new)
+		cluster = prediction[0].argmax()
+		probability = prediction[0][cluster]
+		return cluster, probability
 
 	def dbscan_explain(self, x_new, klass):
 		x_new = x_new.reshape(1, -1)
@@ -658,7 +679,8 @@ class DeckClassifier(object):
 			if i >= j:
 				continue
 			else:
-				dist = distance.hamming(data[i], data[j])
+				# dist = distance.hamming(data[i], data[j])
+				dist = distance.cityblock(data[i], data[j])
 				pairwise_distance[i][j] = dist
 				max_dist = max(dist, max_dist)
 				if dist > 0.001:
@@ -688,17 +710,25 @@ if __name__ == '__main__':
 	dataset_path = sys.argv[1]
 	results_path = sys.argv[2]
 	map_path = sys.argv[3]
+	train_data_path = "train_decks.csv"  # TODO reload from state
+
 	classifier = DeckClassifier()
-	classifier.fit("train_decks.csv")  # TODO reload from state
+	loaded_data, _ = classifier.load_data_from_file(train_data_path)
+	classifier.fit(loaded_data)
+	del loaded_data
+
 	decks, _ = classifier._load_decks_from_file(dataset_path)
 	for klass, klass_decks in decks.items():
 		klass = int(''.join(filter(str.isdigit, klass)))
 		hero_to_class = ['',
-	                 'WARRIOR', 'SHAMAN', 'ROGUE',
-	                 'PALADIN', 'HUNTER', 'DRUID',
-	                 'WARLOCK', 'MAGE', 'PRIEST',
-	                 ]
+		                 'WARRIOR', 'SHAMAN', 'ROGUE',
+		                 'PALADIN', 'HUNTER', 'DRUID',
+		                 'WARLOCK', 'MAGE', 'PRIEST',
+		                 ]
 		klass = hero_to_class[klass]
-		results = classifier.predict(klass_decks, klass)
-		print(results)
+		results = []
+		print("Klass", klass)
+		for deck in klass_decks:
+			predicted_deck, prob = classifier.predict(deck, klass)
+			print("p", prob, "deck", sorted(predicted_deck))
 	print("write to:", results_path, map_path)
