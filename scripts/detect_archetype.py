@@ -16,6 +16,17 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.neighbors import NearestNeighbors
 
+import lda
+
+try:
+	import matplotlib
+	matplotlib.use('Agg')
+	import matplotlib.pyplot as plt
+except:
+	print("no plotting available")
+	pass
+
+
 
 class DeckClassifier(object):
 	CLASSIFIER_CACHE = "klass_classifiers.pkl"
@@ -153,7 +164,7 @@ class DeckClassifier(object):
 	def deck_to_vector(self, decks, dimension_to_card_name):
 		klass_data = []
 		for deck in decks:
-			datapoint = np.zeros(len(dimension_to_card_name))
+			datapoint = np.zeros(len(dimension_to_card_name), dtype=np.int)
 			for card in deck:
 				try:
 					card_dimension = dimension_to_card_name.index(card)
@@ -211,6 +222,7 @@ class DeckClassifier(object):
 
 		data = transform.preprocess(data)
 		data = transform.dimensionality_reduction(data)
+		# self.plot_data(data)
 
 		print("training:", klass)
 		eps, min_samples = self.fit_clustering_parameters(data)
@@ -435,6 +447,12 @@ class DeckClassifier(object):
 			canonical_decks[label] = canonical_deck
 		return canonical_decks
 
+	def plot_data(self, data):
+		tsne_model = TSNE(n_components=2)
+		embed = tsne_model.fit_transform(data)
+		plt.scatter(embed[:, 0], embed[:, 1])
+		plt.savefig("plot.png")
+
 	def plot_clusters(self, cluster_indexes, db, X, transform):
 		core_samples_mask = np.zeros_like(cluster_indexes, dtype=bool)
 		core_samples_mask[db.core_sample_indices_] = True
@@ -476,28 +494,8 @@ class DeckClassifier(object):
 		plt.show()
 
 	def eval_train_results(self, data, labels, deck_names=None):
-		# num_cluster_names = 0
-		# for klass, names in self.cluster_names.items():
-		# 	num_cluster_names += len(names)
 		# TODO: print table with: inter cluster distance and cluster width/variance
 		mean_unknown_ratio = 0
-		# if num_cluster_names != 0:
-		#	for klass, cluster_names in self.cluster_names.items():
-		#		print(klass, "clusters", len(cluster_names), end='{')
-		#		for cluster_index, cluster_name in cluster_names.items():
-		#			decks = self.get_decks_names_in_cluster(labels[klass], cluster_index, deck_names[klass])
-		#			if cluster_name == "UNKNOWN":
-		#				# print(int((float(len(decks)) / len(data[klass])) * 100), end=" ")
-		#				print("}")
-		#				unknown_ratio = (float(len(decks)) / len(data[klass])) * 100
-		#				mean_unknown_ratio += unknown_ratio / len(self.cluster_names)
-		#				print("\t{}[{}, {:.0f}%]".format(cluster_name, len(decks), unknown_ratio))
-		#			else:
-		#				print(cluster_name, len(decks), end=", ")
-		#		self.canonical_decks[klass] = self.get_canonical_decks(data[klass], self.pca[klass],
-		#		                                                       labels[klass],
-		#		                                                       self.dimension_to_card_name[klass])
-		# else:
 		for klass, cluster_indexes in labels.items():
 			cluster_set = list(reversed(sorted(set(cluster_indexes))))
 			print(klass, "num clusters:", len(cluster_set), "{")
@@ -530,7 +528,6 @@ class DeckClassifier(object):
 					print("\t{}[{}, {:.0f}%]".format("unknown", len(decks), unknown_ratio))
 					print("-" * 30)
 
-				# self.plot_clusters(cluster_indexes, db[klass], data[klass], self.pca[klass])
 		print("mean unknown ratio {:.2f}%".format(mean_unknown_ratio))
 
 	def eval_test_results(self, test_data, test_labels):
@@ -666,7 +663,7 @@ class DeckClassifier(object):
 		# being just an heuristics we don't need to consider the whole training set
 
 		MIN_DATAPOINTS = 100
-		SIZE = int(min(MIN_DATAPOINTS, len(data) / 25))  # take only 1/25th of the data, min 100
+		SIZE = int(max(MIN_DATAPOINTS, len(data) / 25))  # take only 1/25th of the data, min 100
 
 		pairs = list(itertools.product(range(SIZE), repeat=2))
 		avg = 0
@@ -686,10 +683,9 @@ class DeckClassifier(object):
 				if dist > 0.001:
 					min_dist = min(dist, min_dist)
 					avg += dist / len(pairs)
-		print("distances: avg:", avg * len(data[i]), "max:", max_dist * len(data[i]), "min", min_dist * len(data[i]))
-		eps = min_dist + (avg - min_dist) / 10  # TODO: coefficent
-		# consider meaningful decks only if they appear atleast 2% of the time
-		min_samples = int(len(data) / 50)
+		print("distances: avg:", avg, "max:", max_dist, "min", min_dist)
+		eps = min_dist + 0.1 * (avg - min_dist)  # TODO: coefficent
+		min_samples = int(len(data) / 25)
 		return eps, min_samples
 
 
@@ -715,6 +711,21 @@ if __name__ == '__main__':
 	classifier = DeckClassifier()
 	loaded_data, _ = classifier.load_data_from_file(train_data_path)
 	classifier.fit(loaded_data)
+
+	for klass, klass_decks in loaded_data.items():
+		model = lda.LDA(n_topics=20)
+		model.fit(klass_decks)
+		archetype_to_card = model.topic_word_
+		topcards = 8
+		for i, archetype_card_dist in enumerate(archetype_to_card):
+			core_cards_dim = np.argsort(archetype_card_dist)[:-(topcards + 1): -1]
+			print("topic {}:".format(i))
+			for card_dim in core_cards_dim:
+				card_id = classifier.dimension_to_card_name[klass][card_dim]
+				card_title = classifier.card_db[card_id]
+				print("{}\t".format(card_title), end="")
+			print("")
+
 	del loaded_data
 
 	decks, _ = classifier._load_decks_from_file(dataset_path)
