@@ -85,7 +85,7 @@ class DeckClassifier(object):
 		return self.test_accuracy(data)
 
 	@staticmethod
-	def load_decks_from_file(file_name):
+	def load_decks_from_file(file_name):  # TODO make private
 		decks = collections.defaultdict(list)
 		deck_names = {}
 		with open(file_name, 'r') as f:
@@ -746,7 +746,7 @@ if __name__ == '__main__':
 
 	with open(map_path, 'w') as archetype_map:
 		map_writer = csv.writer(archetype_map)
-		for klass, archetypes in classifier.canonical_decks.values():
+		for klass, archetypes in classifier.canonical_decks.items():
 			for i, archetype in enumerate(archetypes):
 				map_writer.writerow([klass, i] + [card.name for card in archetype])
 	print("done")
