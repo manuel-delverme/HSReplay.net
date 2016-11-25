@@ -70,7 +70,7 @@ class DeckClassifier(object):
 		self.classifier_state['labels'] = labels
 
 		# print("train results:")
-		self.eval_train_results(data, labels)
+		# self.eval_train_results(data, labels) ## TODO re-eanble
 
 	# print("test results:")
 	# self.eval_test_results(test_data, test_labels)
@@ -188,7 +188,6 @@ class DeckClassifier(object):
 		for klass in decks.keys():
 			self.dimension_to_card_name[klass] = list({card for deck in decks[klass] for card in deck})
 			data[klass] = self.deck_to_vector(decks[klass], self.dimension_to_card_name[klass])
-			break
 
 		return data, deck_names
 
