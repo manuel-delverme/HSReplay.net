@@ -26,7 +26,6 @@ except:
 	pass
 
 
-
 class DeckClassifier(object):
 	CLASSIFIER_CACHE = "klass_classifiers.pkl"
 	PCA_DIMENSIONS = 30
@@ -61,33 +60,21 @@ class DeckClassifier(object):
 		transform = {}
 		labels = {}
 		for klass in data.keys():
-			classifier[klass], transform[klass], labels[klass] = \
-				self.train_classifier(data[klass], eps_mod, samples_mod, klass)
-		# cluster_names, _, _ = self.name_clusters(deck_names[klass], klass, labels)
+			classifier[klass], transform[klass], labels[klass] = self.train_classifier(data[klass], eps_mod, samples_mod, klass)
 
 		self.classifier_state['classifier'] = classifier
 		self.classifier_state['transform'] = transform
 		self.classifier_state['labels'] = labels
 
-		# print("train results:")
-		# self.eval_train_results(data, labels) ## TODO re-eanble
-
-	# print("test results:")
-	# self.eval_test_results(test_data, test_labels)
-
-	# with open(self.CLASSIFIER_CACHE, 'wb') as d:
-	#	state_tuple = (self.klass_classifiers, self.dimension_to_card_name, self.pca, self.cluster_names, self.canonical_decks)
-	#	pickle.dump(state_tuple, d)
-
-
 	def predict(self, deck, klass):
 		lookup = self.dimension_to_card_name
 		x = self.deck_to_vector([deck], lookup[klass])
 		x = x.reshape(1, -1)
-		x = self.classifier_state['transform'][klass].transform(x)
+		# x = self.classifier_state['transform'][klass].transform(x)
+		classifier = self.classifier_state['classifier'][klass]
 
-		index, confidence = self.dbscan_predict(x, klass)
-		index = int(index)
+		confidence = classifier.predict(x)
+		index = confidence.argmax()
 		# name = self.classifier_state['cluster_names'][klass][index]
 		# races = self.classifier.cluster_races[klass][index]
 		# categories = self.classifier.cluster_categories[klass][index]
@@ -98,7 +85,7 @@ class DeckClassifier(object):
 		return self.test_accuracy(data)
 
 	@staticmethod
-	def _load_decks_from_file(file_name):
+	def load_decks_from_file(file_name):
 		decks = collections.defaultdict(list)
 		deck_names = {}
 		with open(file_name, 'r') as f:
@@ -181,7 +168,7 @@ class DeckClassifier(object):
 		return data
 
 	def load_data_from_file(self, file_name):
-		decks, deck_names = self._load_decks_from_file(file_name)
+		decks, deck_names = self.load_decks_from_file(file_name)
 
 		data = {}
 		# TODO: use vectorizer
@@ -208,7 +195,7 @@ class DeckClassifier(object):
 				return data
 
 			def transform(self, data):
-				data = self.scaler.transform(data)
+				data = self.scaler.transform(data.astype(float))
 				data = self.pca.transform(data)
 				return data
 
@@ -219,7 +206,7 @@ class DeckClassifier(object):
 
 		transform = Transformer(output_dimensions=self.PCA_DIMENSIONS)
 
-		data_processed = transform.preprocess(data)
+		data_processed = transform.preprocess(data.astype(float))
 		data_processed = transform.dimensionality_reduction(data_processed)
 		# self.plot_data(data)
 
@@ -422,22 +409,28 @@ class DeckClassifier(object):
 			model.labels_.reshape(-1, 1)
 			num_core_decks = model.labels_.max()
 			return num_core_decks
+
 		num_core_decks = find_nr_archetypes(data_processed, min_samples, eps)
-		model = LatentDirichletAllocation(n_topics=num_core_decks, max_iter=500, evaluate_every=10, verbose=1)
+		model = LatentDirichletAllocation(n_topics=num_core_decks, max_iter=500, evaluate_every=20,
+		                                  learning_method="batch")
 
 		classification_results = model.fit_transform(data)
 		pArchetype_Card = model.components_
 
-		topcards = 10
+		topcards = 15
+		self.canonical_decks[klass] = []  # klass SHOULD NOT BE HERE TODO: refactor!
 		for archetype_index, archetype_card_dist in enumerate(pArchetype_Card):
+			self.canonical_decks[klass].append([])
 			archetype_card_ids = np.argsort(archetype_card_dist)[:-(topcards + 1): -1]
 			print("topic {}:".format(archetype_index))
 			for card_dim in archetype_card_ids:
 				card_id = classifier.dimension_to_card_name[klass][card_dim]
 				card_title = classifier.card_db[card_id]
 				print("{}\t".format(card_title), end="")
+				self.canonical_decks[klass][archetype_index].append(card_title)
 			print("")
 
+		model.predict = model.transform  # TODO: wtf!
 		# return model.labels_, model
 		return classification_results, model
 
@@ -737,18 +730,23 @@ if __name__ == '__main__':
 
 	del loaded_data
 
-	decks, _ = classifier._load_decks_from_file(dataset_path)
-	for klass, klass_decks in decks.items():
-		klass = int(''.join(filter(str.isdigit, klass)))
-		hero_to_class = ['',
-		                 'WARRIOR', 'SHAMAN', 'ROGUE',
-		                 'PALADIN', 'HUNTER', 'DRUID',
-		                 'WARLOCK', 'MAGE', 'PRIEST',
-		                 ]
-		klass = hero_to_class[klass]
-		results = []
-		print("Klass", klass)
-		for deck in klass_decks:
-			predicted_deck, prob = classifier.predict(deck, klass)
-			print("p", prob, "deck", sorted(predicted_deck))
-	print("write to:", results_path, map_path)
+	decks, _ = classifier.load_decks_from_file(dataset_path)
+	with open(results_path, 'w') as results:
+		results_writer = csv.writer(results)
+		for klass, klass_decks in decks.items():
+			klass = int(''.join(filter(str.isdigit, klass)))
+			hero_to_class = ['UNKNOWN', 'WARRIOR', 'SHAMAN', 'ROGUE', 'PALADIN',
+			                 'HUNTER', 'DRUID', 'WARLOCK', 'MAGE', 'PRIEST']
+			klass = hero_to_class[klass]
+			results = []
+			for deck in klass_decks:
+				predicted_deck, prob = classifier.predict(deck, klass)
+				archetype_number = prob.argmax()
+				results_writer.writerow([archetype_number] + deck)
+
+	with open(map_path, 'w') as archetype_map:
+		map_writer = csv.writer(archetype_map)
+		for klass, archetypes in classifier.canonical_decks.values():
+			for i, archetype in enumerate(archetypes):
+				map_writer.writerow([klass, i] + [card.name for card in archetype])
+	print("done")
