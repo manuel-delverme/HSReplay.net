@@ -15,8 +15,7 @@ from sklearn.decomposition import PCA
 
 from sklearn.manifold import TSNE
 from sklearn.neighbors import NearestNeighbors
-
-import lda
+from sklearn.decomposition import LatentDirichletAllocation
 
 try:
 	import matplotlib
@@ -62,7 +61,7 @@ class DeckClassifier(object):
 		transform = {}
 		labels = {}
 		for klass in data.keys():
-			classifier[klass], transform[klass], labels[klass], _ = \
+			classifier[klass], transform[klass], labels[klass] = \
 				self.train_classifier(data[klass], eps_mod, samples_mod, klass)
 		# cluster_names, _, _ = self.name_clusters(deck_names[klass], klass, labels)
 
@@ -189,6 +188,7 @@ class DeckClassifier(object):
 		for klass in decks.keys():
 			self.dimension_to_card_name[klass] = list({card for deck in decks[klass] for card in deck})
 			data[klass] = self.deck_to_vector(decks[klass], self.dimension_to_card_name[klass])
+			break
 
 		return data, deck_names
 
@@ -220,12 +220,12 @@ class DeckClassifier(object):
 
 		transform = Transformer(output_dimensions=self.PCA_DIMENSIONS)
 
-		data = transform.preprocess(data)
-		data = transform.dimensionality_reduction(data)
+		data_processed = transform.preprocess(data)
+		data_processed = transform.dimensionality_reduction(data_processed)
 		# self.plot_data(data)
 
 		print("training:", klass)
-		eps, min_samples = self.fit_clustering_parameters(data)
+		eps, min_samples = self.fit_clustering_parameters(data_processed)
 
 		eps *= eps_mod
 		print("eps:", eps)
@@ -233,8 +233,9 @@ class DeckClassifier(object):
 		min_samples = int(min_samples_mod * min_samples)
 		print("min_samples:", min_samples)
 
-		labels, db = self.label_data(data, min_samples, eps)
+		labels, classifier = self.label_data(data, data_processed, min_samples, eps, klass)
 
+		"""
 		noise_mask = labels == -1
 		dims = data.shape[1]
 
@@ -250,7 +251,8 @@ class DeckClassifier(object):
 		else:
 			print(klass, "classifier failed with ", len(data), "datapoints")
 			classifier = None
-		return classifier, transform, labels, db
+		"""
+		return classifier, transform, labels
 
 	@staticmethod
 	def get_decks_names_in_cluster(labels, cluster_index, deck_names):
@@ -411,12 +413,34 @@ class DeckClassifier(object):
 				train_data[klass] = klass_data[mask].reshape(-1, klass_data.shape[1])
 		return train_data, deck_names, test_dataset, test_labels
 
-	def label_data(self, data, min_samples, eps):
-		model = DBSCAN(eps=eps, min_samples=min_samples, metric='manhattan')
-		# model = hdbscan.HDBSCAN(metric="manhattan", min_cluster_size=cluster_size, min_samples=min_samples)
-		model.fit(data)
-		model.labels_.reshape(-1, 1)
-		return model.labels_, model
+	def label_data(self, data, data_processed, min_samples, eps, klass):
+		def find_nr_archetypes(data, min_samples, eps):
+			# define some core decks with strict parameters
+			model = DBSCAN(eps=eps, min_samples=min_samples, metric='manhattan')
+
+			# model = hdbscan.HDBSCAN(metric="manhattan", min_cluster_size=cluster_size, min_samples=min_samples)
+			model.fit(data)
+			model.labels_.reshape(-1, 1)
+			num_core_decks = model.labels_.max()
+			return num_core_decks
+		num_core_decks = find_nr_archetypes(data_processed, min_samples, eps)
+		model = LatentDirichletAllocation(n_topics=num_core_decks, max_iter=500, evaluate_every=10, verbose=1)
+
+		classification_results = model.fit_transform(data)
+		pArchetype_Card = model.components_
+
+		topcards = 10
+		for archetype_index, archetype_card_dist in enumerate(pArchetype_Card):
+			archetype_card_ids = np.argsort(archetype_card_dist)[:-(topcards + 1): -1]
+			print("topic {}:".format(archetype_index))
+			for card_dim in archetype_card_ids:
+				card_id = classifier.dimension_to_card_name[klass][card_dim]
+				card_title = classifier.card_db[card_id]
+				print("{}\t".format(card_title), end="")
+			print("")
+
+		# return model.labels_, model
+		return classification_results, model
 
 	def get_canonical_decks(self, data, transform, labels, lookup):
 		transformed_data = False
@@ -711,20 +735,6 @@ if __name__ == '__main__':
 	classifier = DeckClassifier()
 	loaded_data, _ = classifier.load_data_from_file(train_data_path)
 	classifier.fit(loaded_data)
-
-	for klass, klass_decks in loaded_data.items():
-		model = lda.LDA(n_topics=20)
-		model.fit(klass_decks)
-		archetype_to_card = model.topic_word_
-		topcards = 8
-		for i, archetype_card_dist in enumerate(archetype_to_card):
-			core_cards_dim = np.argsort(archetype_card_dist)[:-(topcards + 1): -1]
-			print("topic {}:".format(i))
-			for card_dim in core_cards_dim:
-				card_id = classifier.dimension_to_card_name[klass][card_dim]
-				card_title = classifier.card_db[card_id]
-				print("{}\t".format(card_title), end="")
-			print("")
 
 	del loaded_data
 
