@@ -1,50 +1,149 @@
 import collections
+import json
 import sys
 import csv
+import tabulate
 import numpy as np
+from typing import Tuple, Dict, List
 from hearthstone import cardxml
 from sklearn.cluster import DBSCAN
 from sklearn.decomposition import LatentDirichletAllocation
 
 
+class vectorizer_1hot(object):
+	def __init__(self, card_db):
+		self.dimension_to_card_name = {}
+		self.card_db = card_db
+
+	def train_klass(self, klass: str, cards_seen_for_klass) -> None:
+		self.dimension_to_card_name[klass] = list(cards_seen_for_klass)
+
+	def invert(self, klass: str, card_dim: int) -> np.ndarray:
+		return self.dimension_to_card_name[klass][card_dim]
+
+	def transform(self, klass: str, decks: list) -> np.ndarray:
+		klass_data = []
+		ignored_cards = 0
+		for deck in decks:
+			datapoint = np.zeros(len(self.dimension_to_card_name[klass]), dtype=np.float)
+			for card in deck:
+				try:
+					card_dimension = self.dimension_to_card_name[klass].index(card)
+					card_value = 1.0 / self.card_db[card].max_count_in_deck
+				except ValueError:
+					ignored_cards += 1
+					continue
+				if isinstance(deck, list):
+					datapoint[card_dimension] += card_value
+				else:
+					datapoint[card_dimension] = deck[card]
+			klass_data.append(datapoint)
+		data = np.array(klass_data)
+		if ignored_cards > 0:
+			print("[{}] {} cards were ignored when vectorizing".format(klass, ignored_cards))
+		if len(data.shape) == 1:
+			return data.reshape(1, -1)
+		else:
+			return data
+
+
+
 class DeckClassifier(object):
-	def __init__(self, config: dict = None, min_samples: int = 1) -> None:
+	def __init__(self, config: dict = None, min_samples: float = 1.5 / 100) -> None:
 		"""
 
 		Args:
 			config: dictionary like object
 			min_samples: scaling factor to control how many times a deck has to be seen before being considered
 		"""
-
-		self.CLASSIFIER_CACHE = "klass_classifiers.pkl"
 		self.card_db, _ = cardxml.load()
 
-		self.dimension_to_card_name = {}
-
 		if config:
-			min_samples = config['min_samples_modifier']
+			min_samples = config['min_samples_ratio']
 
 		self.classifier_state = {
-			'min_samples_mod': min_samples,
+			'min_samples_ratio': min_samples,
+			'vectorizer'       : {},
 		}
+		self.hero_to_class = ['UNKNOWN', 'UNKNOWN', 'DRUID', 'HUNTER', 'MAGE', 'PALADIN', 'PRIEST', 'ROGUE',
+		                      'SHAMAN', 'WARLOCK', 'WARRIOR']
 
 	# sk-learn API
-	def fit(self, data: dict) -> None:
+	def fit_transform(self, data: dict, popular_decks: np.ndarray, spd) -> Dict[str, List[List[int]]]:
 		"""
 
 		Args:
 			data: dict of (n_decks, n_dims) np.ndarray, keys are class names, values are the decks
 		"""
-		samples_mod = self.classifier_state['min_samples_mod']
+		samples_mod = self.classifier_state['min_samples_ratio']
 
 		classifier = {}
-		labels = {}
+		archetypes = {}
+		min_samples = {}
+
 		for klass in data.keys():
-			classifier[klass], labels[klass] = self.train_classifier(data[klass], samples_mod, klass)
+			if len(data[klass]) == 0:
+				print("no data; skipping", klass)
+			print("training:", klass)
+
+			clas_, arch_, min_samp_ = self.train_classifier(data[klass], popular_decks[klass], spd[klass], samples_mod)
+			classifier[klass], archetypes[klass] = clas_, arch_
+			min_samples[klass] = min_samp_
+			break  # TEST
 
 		self.classifier_state['classifier'] = classifier
-		self.classifier_state['labels'] = labels
-		self.classifier_state['vectorizer'] = self.dimension_to_card_name
+		# self.classifier_state['labels'] = archetypes
+		self.classifier_state['min_samples'] = min_samples
+		return archetypes
+
+	def _update_classifier(self, data: np.ndarray, klass: str) -> None:
+		assert len(data) > 0
+
+		min_samples_ratio = self.classifier_state['min_samples_ratio']
+		min_samples = self.update_fit_clustering_params(data, min_samples_ratio)
+
+		classifier, archetypes = self.detect_archetypes(data, min_samples)
+
+		num_core_decks = self.find_nr_archetypes(data, min_samples)
+		print("detected: {} archetypes".format(num_core_decks))
+		model = LatentDirichletAllocation(n_topics=num_core_decks, max_iter=500, evaluate_every=20,
+		                                  learning_method="batch")
+
+		if num_core_decks == 0:
+			print("NO ARCHETYPES FOUND!")
+			classification_results = []
+		else:
+			classification_results = model.fit_transform(data)
+
+		model.predict = model.transform  # TODO: wtf!
+
+		return classifier, archetypes, min_samples
+
+	# sk-learn API
+	def predict_update(self, data: List[str], klass: str) -> Tuple[List[str], List[float]]:
+		"""
+
+		Args:
+		    klass:
+			data:
+		"""
+		# SETUP
+		# canonical_decks = self.classifier_state['canonical_decks']
+		# samples_mod = self.classifier_state['min_samples_mod']
+		# classifier = self.classifier_state['classifier']
+		# labels = self.classifier_state['labels']
+
+		x = self.deck_to_1hot_vector(data, klass, self.classifier_state['vectorizer'][klass])
+
+		# UPDATE
+		self._update_classifier(x, klass)
+
+		# CALCULATE
+		canonical_deck, confidence = self.predict(x, klass)
+
+		index = confidence.argmax()
+		canonical_deck = self.classifier_state['canonical_decks'][klass][index]
+		return canonical_deck, confidence
 
 	def predict(self, deck: np.ndarray, klass: str) -> (list, np.ndarray):
 		"""
@@ -57,11 +156,11 @@ class DeckClassifier(object):
 			a list of cards (archetype), confidence scores for the various class archetypes
 
 		"""
-		x = self.deck_to_vector([deck], klass)
+		x = self.deck_to_1hot_vector([deck], klass, self.classifier_state['vectorizer'][klass])
 		classifier = self.classifier_state['classifier'][klass]
 		confidence = classifier.predict(x)
 		index = confidence.argmax()
-		canonical_deck = self.canonical_decks[klass][index]
+		canonical_deck = self.classifier_state['canonical_decks'][klass][index]
 		return canonical_deck, confidence
 
 	@staticmethod
@@ -105,38 +204,18 @@ class DeckClassifier(object):
 				decks[klass].append(deck)
 		return dict(decks)
 
-	def deck_to_vector(self, decks: list, klass: str) -> np.ndarray:
-		klass_data = []
-		ignored_cards = 0
-		for deck in decks:
-			datapoint = np.zeros(len(self.dimension_to_card_name[klass]), dtype=np.float)
-			for card in deck:
-				try:
-					card_dimension = self.dimension_to_card_name[klass].index(card)
-					card_value = 1.0 / self.card_db[card].max_count_in_deck
-				except ValueError:
-					ignored_cards += 1
-					continue
-				if isinstance(deck, list):
-					datapoint[card_dimension] += card_value
-				else:
-					datapoint[card_dimension] = deck[card]
-			klass_data.append(datapoint)
-		data = np.array(klass_data)
-		if ignored_cards > 0:
-			print("[{}] {} cards were ignored when vectorizing".format(klass, ignored_cards))
-		if len(data.shape) == 1:
-			return data.reshape(1, -1)
-		else:
-			return data
-
-	def load_train_data_from_file(self, file_name, require_complete=True):
+	def load_train_data_from_file(self, file_name: str, require_complete: bool = True) -> np.ndarray:
 		decks = self.load_decks_from_file(file_name)
+		vectorizer = vectorizer_1hot(self.card_db)
+
+		assert len(decks) > 0
 
 		data = {}
 		dropped = 0
 		dropped_cards = set()
 		decks_in_file = 0
+		dimension_to_card_name = {}
+
 		for klass in decks.keys():
 			cards_seen_for_klass = set()
 			for deck in decks[klass]:
@@ -153,57 +232,48 @@ class DeckClassifier(object):
 					dropped += 1
 					continue
 				cards_seen_for_klass.update(filtered_deck)
-			self.dimension_to_card_name[klass] = list(cards_seen_for_klass)
-			data[klass] = self.deck_to_vector(decks[klass], klass)
+			if len(cards_seen_for_klass) > 0:
+				dimension_to_card_name[klass] = list(cards_seen_for_klass)
+				data[klass] = vectorizer.transform(decks[klass], klass, dimension_to_card_name[klass])
+			else:
+				print("[{}] ignored, had no valid cards".format(klass))
+
 		print("[{}] dropped {} cards as not collectible:".format(klass, len(dropped_cards)))
+		self.classifier_state['vectorizer'] = vectorizer
 		return data
 
-	def train_classifier(self, data, min_samples_mod, klass):
-		if len(data) == 0:
-			print("no data; skipping", klass)
-		print("training:", klass)
-		min_samples = self.fit_clustering_parameters(data)
+	def train_classifier(self, data: np.ndarray, popular_decks: np.ndarray, spd, min_samples_ratio: int) -> Tuple[
+		LatentDirichletAllocation, list, int]:
+		assert len(data) > 0
+		classifier, archetypes = self.detect_archetypes(data, popular_decks, spd)
 
-		min_samples = int(min_samples_mod * min_samples)
-		print("min_samples:", min_samples)
-
-		labels, classifier = self.label_data(data, min_samples, klass)
-		return classifier, labels
+		return classifier, archetypes, 0
 
 	def load_classifier_state(self, state):
 		self.classifier_state = state
 
-	def label_data(self, data, min_samples, klass):
-		def find_nr_archetypes(x, min_samples_):
-			dbscan = DBSCAN(eps=1, min_samples=min_samples_, metric='manhattan')
-			dbscan.fit(x)
-			dbscan.labels_.reshape(-1, 1)
-			n_archetypes = dbscan.labels_.max() + 1
-			return n_archetypes
+	@staticmethod
+	def find_nr_archetypes(x):
+		dbscan = DBSCAN(eps=4, min_samples=1, metric='manhattan', algorithm='ball_tree')
+		dbscan.fit(x)
+		n_archetypes = dbscan.labels_.max() + 1
+		return n_archetypes
 
-		num_core_decks = find_nr_archetypes(data, min_samples)
+	def detect_archetypes(self, data: np.ndarray, popular_decks: np.ndarray, spd) -> Tuple[
+		LatentDirichletAllocation, list]:
+		num_core_decks = self.find_nr_archetypes(popular_decks)
+		print("detected: {} archetypes".format(num_core_decks))
 		model = LatentDirichletAllocation(n_topics=num_core_decks, max_iter=500, evaluate_every=20,
 		                                  learning_method="batch")
 
-		classification_results = model.fit_transform(data)
-		pArchetype_Card = model.components_
-
-		topcards = 15
-		self.classifier_state['canonical_decks'][klass] = []  # klass SHOULD NOT BE HERE TODO: refactor!
-		for archetype_index, archetype_card_dist in enumerate(pArchetype_Card):
-			self.classifier_state['canonical_decks'][klass].append([])
-			archetype_card_ids = np.argsort(archetype_card_dist)[:-(topcards + 1): -1]
-			print("topic {}:".format(archetype_index))
-			for card_dim in archetype_card_ids:
-				card_id = self.dimension_to_card_name[klass][card_dim]
-				card_title = self.card_db[card_id]
-				print("{}\t".format(card_title), end="")
-				self.classifier_state['canonical_decks'][klass][archetype_index].append(card_title)
-			print("")
+		if num_core_decks == 0:
+			print("NO ARCHETYPES FOUND!")
+			classification_results = []
+		else:
+			classification_results = model.fit_transform(spd)
 
 		model.predict = model.transform  # TODO: wtf!
-		# return model.labels_, model
-		return classification_results, model
+		return model, classification_results
 
 	def get_canonical_decks(self, data, transform, labels, lookup):
 		transformed_data = False
@@ -231,27 +301,133 @@ class DeckClassifier(object):
 			canonical_decks[label] = canonical_deck
 		return canonical_decks
 
-	@staticmethod
-	def fit_clustering_parameters(data):
-		min_samples = int(len(data) * 7.5 / 100.0)  # atleast {}% of the decks
+	def fit_clustering_parameters(self, data: np.ndarray, min_samples_ratio: float) -> int:
+		self.classifier_state['dataset_size'] = len(data)
+		min_samples = int(len(data) * min_samples_ratio)
 		return min_samples
+
+	def update_fit_clustering_params(self, data: np.ndarray, min_samples_ratio: float) -> int:
+		self.classifier_state['dataset_size'] += len(data)
+		min_samples = int(self.classifier_state['dataset_size'] * min_samples_ratio)
+		return min_samples
+
+	def calculate_canonical_decks(self) -> Dict[str, list]:
+		canonical_decks = {}
+		for klass in self.classifier_state['classifier'].keys():
+			archetype_classifier = self.classifier_state['classifier'][klass]
+
+			pArchetype_Card = archetype_classifier.components_
+			threshold = 0.50
+			canonical_decks[klass] = []
+
+			for archetype_index, archetype_card_dist in enumerate(pArchetype_Card):
+				canonical_decks[klass].append([])
+				normaliz_prob = archetype_card_dist / archetype_card_dist.max()
+				most_significant_indixes = np.where(normaliz_prob > threshold)[0]
+				most_significant_weights = archetype_card_dist[most_significant_indixes]
+				# archetype_card_ids = np.argsort(most_significant_cards)  # archetype_card_dist)
+				most_significant = dict(zip(most_significant_indixes, most_significant_weights))
+				top_card_ids = sorted(most_significant, key=most_significant.get, reverse=True)
+				print("topic {}:".format(archetype_index))
+				sum = 0
+				for card_dim in top_card_ids:
+					card_id = self.classifier_state['vectorizer'].invert(klass, card_dim)
+					card_title = self.card_db[card_id]
+					sum += most_significant[card_dim]
+					print("{} {}\t".format(card_title, int(100 * most_significant[card_dim]) / 100.), end="")
+					# self.classifier_state['canonical_decks'][klass][archetype_index].append(card_title)
+					canonical_decks[klass][archetype_index].append(card_title)
+				print("\ndeck value:{}".format(int(sum)))
+		self.classifier_state['canonical_decks'] = canonical_decks
+		return canonical_decks
+
+	# takes a file, returns decks
+	def load_decks_from_json_file(self, file_name):
+		with open(file_name) as f:
+			kara_json = json.load(f)
+
+		decks_in_file, popular_decks, semi_popular_decks = self.load_decks_from_json(kara_json)
+		print("loaded", len(decks_in_file), "decks")
+		return decks_in_file, popular_decks, semi_popular_decks
+
+	def load_decks_from_json(self, kara_json, drop_noise=True):
+		points = {}
+		card_to_id = kara_json['map']
+		decks_in_file = 0
+		popular_points = {}
+		semi_popular_points = {}
+		vectorizer = vectorizer_1hot(self.card_db)
+
+		for klass_id, deck_list in kara_json['decks'].items():
+			klass = self.hero_to_class[int(klass_id)]
+			klass_decks = []
+			cards_seen_for_klass = set()
+			times_decks_were_seen = []
+
+			for deck_json in deck_list:
+				time_seen = deck_json['observations']
+				cards = deck_json['cards']
+				deck = []
+				for card_external_id, num_cards in cards.items():
+					card_id = card_to_id[card_external_id]
+					cards_seen_for_klass.add(card_id)
+					# card = self.card_db[card_id]
+					for _ in range(num_cards):
+						deck.append(card_id)
+				decks_in_file += time_seen
+				times_decks_were_seen.append(time_seen)
+				klass_decks.append(deck)
+
+			vectorizer.train_klass(klass, cards_seen_for_klass)
+			unique_klass_points = vectorizer.transform(klass, klass_decks)
+
+			samples_mod = self.classifier_state['min_samples_ratio']
+			dataset_size = sum(times_decks_were_seen)
+			min_samples = int(dataset_size * samples_mod)
+			dropped_points = 0
+			dropped_decks = 0
+			klass_points = []
+			popular_klass_points = []
+			semipopular_klass_points = []
+			for klass_point, time_seen in zip(unique_klass_points, times_decks_were_seen):
+				for _ in range(time_seen):
+					klass_points.append(klass_point)
+
+				if time_seen >= min_samples:
+					popular_klass_points.append(klass_point)
+
+				if time_seen >= min_samples / 10:
+					semipopular_klass_points.append(klass_point)
+				else:
+					dropped_decks += 1
+					dropped_points += time_seen
+
+			print("[{}]".format(klass), dropped_decks, "unique decks were noise, total datapoints", dropped_points)
+			points[klass] = np.array(klass_points)
+			popular_points[klass] = np.array(popular_klass_points)
+			semi_popular_points[klass] = np.array(semipopular_klass_points)
+		self.classifier_state['vectorizer'] = vectorizer
+		return points, popular_points, semi_popular_points
 
 
 def main():
 	dataset_path = sys.argv[1]
 	results_path = sys.argv[2]
 	map_path = sys.argv[3]
-	train_data_path = "train_decks.csv"  # TODO reload from state
+	# train_data_path = "datasets/Deck_List_Training_Data.csv"
+	kara_data = "datasets/kara_data.json"
 
 	classifier = DeckClassifier()
-	loaded_data = classifier.load_train_data_from_file(train_data_path)
-	classifier.fit(loaded_data)
+	# loaded_data = classifier.load_train_data_from_file(train_data_path)
+	loaded_data, popular_decks, semi_popular_decks = classifier.load_decks_from_json_file(kara_data)
+
+	# classifier.fit_transform({'MAGE': loaded_data['MAGE']})
+	classifier.fit_transform(loaded_data, popular_decks, semi_popular_decks)
+	classifier.calculate_canonical_decks()
 
 	del loaded_data
 
 	decks = classifier.load_decks_from_file(dataset_path)
-	print("done")
-	return
 	with open(results_path, 'w') as results:
 		results_writer = csv.writer(results)
 		for klass, klass_decks in decks.items():
@@ -261,7 +437,7 @@ def main():
 			klass = hero_to_class[klass]
 			results = []
 			for deck in klass_decks:
-				predicted_deck, prob = classifier.predict(deck, klass)
+				predicted_deck, prob = classifier.predict_update(deck, klass)
 				archetype_number = prob.argmax()
 				results_writer.writerow([archetype_number] + deck)
 
