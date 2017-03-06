@@ -1,9 +1,11 @@
 import collections
+import pickle
 import json
 import sys
 import csv
-import tabulate
 import numpy as np
+from collections import defaultdict
+
 from typing import Tuple, Dict, List
 from hearthstone import cardxml
 from sklearn.cluster import DBSCAN
@@ -13,7 +15,9 @@ from sklearn.decomposition import LatentDirichletAllocation
 class vectorizer_1hot(object):
 	def __init__(self, card_db):
 		self.dimension_to_card_name = {}
-		self.card_db = card_db
+		self.max_count_in_deck = {}
+		for card in card_db:
+			self.max_count_in_deck[card_db[card].id] = card_db[card].max_count_in_deck
 
 	def train_klass(self, klass: str, cards_seen_for_klass) -> None:
 		self.dimension_to_card_name[klass] = list(cards_seen_for_klass)
@@ -29,7 +33,7 @@ class vectorizer_1hot(object):
 			for card in deck:
 				try:
 					card_dimension = self.dimension_to_card_name[klass].index(card)
-					card_value = 1.0 / self.card_db[card].max_count_in_deck
+					card_value = 1.0 / self.max_count_in_deck[card]
 				except ValueError:
 					ignored_cards += 1
 					continue
@@ -45,7 +49,6 @@ class vectorizer_1hot(object):
 			return data.reshape(1, -1)
 		else:
 			return data
-
 
 
 class DeckClassifier(object):
@@ -64,9 +67,9 @@ class DeckClassifier(object):
 		self.classifier_state = {
 			'min_samples_ratio': min_samples,
 			'vectorizer'       : {},
+			'hero_to_class'    : ['UNKNOWN', 'UNKNOWN', 'DRUID', 'HUNTER', 'MAGE', 'PALADIN', 'PRIEST', 'ROGUE',
+			                      'SHAMAN', 'WARLOCK', 'WARRIOR']
 		}
-		self.hero_to_class = ['UNKNOWN', 'UNKNOWN', 'DRUID', 'HUNTER', 'MAGE', 'PALADIN', 'PRIEST', 'ROGUE',
-		                      'SHAMAN', 'WARLOCK', 'WARRIOR']
 
 	# sk-learn API
 	def fit_transform(self, data: dict, popular_decks: np.ndarray, spd) -> Dict[str, List[List[int]]]:
@@ -89,7 +92,6 @@ class DeckClassifier(object):
 			clas_, arch_, min_samp_ = self.train_classifier(data[klass], popular_decks[klass], spd[klass], samples_mod)
 			classifier[klass], archetypes[klass] = clas_, arch_
 			min_samples[klass] = min_samp_
-			break  # TEST
 
 		self.classifier_state['classifier'] = classifier
 		# self.classifier_state['labels'] = archetypes
@@ -249,9 +251,6 @@ class DeckClassifier(object):
 
 		return classifier, archetypes, 0
 
-	def load_classifier_state(self, state):
-		self.classifier_state = state
-
 	@staticmethod
 	def find_nr_archetypes(x):
 		dbscan = DBSCAN(eps=4, min_samples=1, metric='manhattan', algorithm='ball_tree')
@@ -313,31 +312,99 @@ class DeckClassifier(object):
 
 	def calculate_canonical_decks(self) -> Dict[str, list]:
 		canonical_decks = {}
+		archetype_data = {}
 		for klass in self.classifier_state['classifier'].keys():
 			archetype_classifier = self.classifier_state['classifier'][klass]
 
-			pArchetype_Card = archetype_classifier.components_
+			try:
+				pArchetype_Card = archetype_classifier.components_
+			except AttributeError:
+				pArchetype_Card = archetype_classifier["components_"]
+
 			threshold = 0.50
 			canonical_decks[klass] = []
+			archetype_data[klass] = {}
 
 			for archetype_index, archetype_card_dist in enumerate(pArchetype_Card):
+				archetype_data[klass][archetype_index] = {}
+				deck_name = ""
+				archetype_report = ""
+
 				canonical_decks[klass].append([])
 				normaliz_prob = archetype_card_dist / archetype_card_dist.max()
 				most_significant_indixes = np.where(normaliz_prob > threshold)[0]
 				most_significant_weights = archetype_card_dist[most_significant_indixes]
 				# archetype_card_ids = np.argsort(most_significant_cards)  # archetype_card_dist)
 				most_significant = dict(zip(most_significant_indixes, most_significant_weights))
-				top_card_ids = sorted(most_significant, key=most_significant.get, reverse=True)
-				print("topic {}:".format(archetype_index))
-				sum = 0
-				for card_dim in top_card_ids:
+				for card_dim in most_significant:
 					card_id = self.classifier_state['vectorizer'].invert(klass, card_dim)
-					card_title = self.card_db[card_id]
-					sum += most_significant[card_dim]
-					print("{} {}\t".format(card_title, int(100 * most_significant[card_dim]) / 100.), end="")
+					card = self.card_db[card_id]
+					# most_significant[card_dim] /= card.max_count_in_deck  # TODO: this should have been normalized already!!!!!!!
+
+				top_card_dims = sorted(most_significant, key=most_significant.get, reverse=True)
+				deck_value = 0
+				mana_curve = [0 for _ in range(31)]
+				race_dist = defaultdict(int)
+				for card_dim in top_card_dims:
+					card_id = self.classifier_state['vectorizer'].invert(klass, card_dim)
+					card = self.card_db[card_id]
+					if card.health > 0:
+						mana_curve[card.cost] += most_significant[card_dim]
+						if card.race:
+							race_dist[card.race] += most_significant[card_dim]
+					else:
+						# penalize spells
+						mana_curve[card.cost] += most_significant[card_dim]/3
+					deck_value += most_significant[card_dim]
+					archetype_report += "{} {}\t".format(card, int(100 * most_significant[card_dim]) / 100.)
 					# self.classifier_state['canonical_decks'][klass][archetype_index].append(card_title)
-					canonical_decks[klass][archetype_index].append(card_title)
-				print("\ndeck value:{}".format(int(sum)))
+					canonical_decks[klass][archetype_index].append(card)
+				archetype_report += "\n"
+
+				earliness_ratio = sum(mana_curve[0:3]) / (0.01 + sum(mana_curve[3:]))
+				if earliness_ratio > 2:
+					deck_name += "Aggro ({}) ".format(earliness_ratio)
+				elif earliness_ratio > 0.5:
+					deck_name += "Tempo ({}) ".format(earliness_ratio)
+				elif earliness_ratio == 0:
+					pass
+				else:
+					deck_name += "Control ({}) ".format(earliness_ratio)
+
+				mvp_id = self.classifier_state['vectorizer'].invert(klass, top_card_dims[0])
+				mvp = self.card_db[mvp_id].name
+				if race_dist:
+					race_dist_ladder = sorted(race_dist, key=race_dist.get, reverse=True)
+					best_race = race_dist_ladder[0]
+					best_race_score = race_dist[race_dist_ladder[0]]
+					other_races_score = deck_value - best_race_score
+					if other_races_score != 0:
+						if best_race_score / other_races_score > 0.3:
+							# one race dominates
+							mvp = str(best_race)
+						mvp += " ({})".format(best_race_score / other_races_score)
+				else:
+					mvp += " ({})".format(most_significant[top_card_dims[0]])
+
+				deck_name += "\"{0}\" ".format(mvp)
+				deck_name += klass.lower()
+				archetype_report += "deck name: {0}\n".format(deck_name)
+				archetype_report += "deck value:{0}\n".format(int(deck_value))
+				archetype_report += "\n"
+				archetype_data[klass][archetype_index]['value'] = deck_value
+				archetype_data[klass][archetype_index]['report'] = archetype_report
+
+			vals = sorted([arch['value'] for arch in archetype_data[klass].values()])
+
+			while archetype_data[klass]:
+				max_val = vals.pop()
+				for idx, arch in archetype_data[klass].items():
+					if arch['value'] == max_val:
+						print("topic {}:".format(idx))
+						print(arch['report'])
+						del archetype_data[klass][idx]
+						break
+
 		self.classifier_state['canonical_decks'] = canonical_decks
 		return canonical_decks
 
@@ -359,7 +426,7 @@ class DeckClassifier(object):
 		vectorizer = vectorizer_1hot(self.card_db)
 
 		for klass_id, deck_list in kara_json['decks'].items():
-			klass = self.hero_to_class[int(klass_id)]
+			klass = self.classifier_state['hero_to_class'][int(klass_id)]
 			klass_decks = []
 			cards_seen_for_klass = set()
 			times_decks_were_seen = []
@@ -409,8 +476,37 @@ class DeckClassifier(object):
 		self.classifier_state['vectorizer'] = vectorizer
 		return points, popular_points, semi_popular_points
 
+	def persist(self, file_name):
+		state = {}
+		for key, val in self.classifier_state.items():
+			state[key] = {}
+			if key == "classifier":
+				for klass, classifier in val.items():
+					state[key][klass] = classifier.get_params()
+					state[key][klass]["components_"] = classifier.components_
+			else:
+				state[key] = val
+		with open(file_name, 'wb') as f:
+			pickle.dump(state, f)
+
+	def load_state_from_file(self, file_name):
+		with open(file_name, 'rb') as f:
+			state = pickle.load(f)
+
+		for key, val in state.items():
+			if key == "classifier":
+				self.classifier_state[key] = {}
+				for klass, params in val.items():
+					self.classifier_state[key][klass] = LatentDirichletAllocation.set_params(params)
+			else:
+				self.classifier_state[key] = val
 
 def main():
+	classifier = DeckClassifier()
+	classifier.load_state_from_file("/tmp/kara_classifier_state")
+	classifier.calculate_canonical_decks()
+	return
+
 	dataset_path = sys.argv[1]
 	results_path = sys.argv[2]
 	map_path = sys.argv[3]
@@ -424,6 +520,8 @@ def main():
 	# classifier.fit_transform({'MAGE': loaded_data['MAGE']})
 	classifier.fit_transform(loaded_data, popular_decks, semi_popular_decks)
 	classifier.calculate_canonical_decks()
+	classifier.persist("/tmp/kara_classifier_state")
+	classifier.load_state_from_file("/tmp/kara_classifier_state")
 
 	del loaded_data
 
