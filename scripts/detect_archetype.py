@@ -339,7 +339,7 @@ class DeckClassifier(object):
 				for card_dim in most_significant:
 					card_id = self.classifier_state['vectorizer'].invert(klass, card_dim)
 					card = self.card_db[card_id]
-					# most_significant[card_dim] /= card.max_count_in_deck  # TODO: this should have been normalized already!!!!!!!
+				# most_significant[card_dim] /= card.max_count_in_deck  # TODO: this should have been normalized already!!!!!!!
 
 				top_card_dims = sorted(most_significant, key=most_significant.get, reverse=True)
 				deck_value = 0
@@ -354,7 +354,7 @@ class DeckClassifier(object):
 							race_dist[card.race] += most_significant[card_dim]
 					else:
 						# penalize spells
-						mana_curve[card.cost] += most_significant[card_dim]/3
+						mana_curve[card.cost] += most_significant[card_dim] / 3
 					deck_value += most_significant[card_dim]
 					archetype_report += "{} {}\t".format(card, int(100 * most_significant[card_dim]) / 100.)
 					# self.classifier_state['canonical_decks'][klass][archetype_index].append(card_title)
@@ -500,6 +500,7 @@ class DeckClassifier(object):
 					self.classifier_state[key][klass] = LatentDirichletAllocation.set_params(params)
 			else:
 				self.classifier_state[key] = val
+
 
 def main():
 	classifier = DeckClassifier()
